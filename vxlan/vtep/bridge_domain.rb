@@ -64,6 +64,15 @@ module VXLAN
       def flood_del(vtep)
         !@flood.delete(vtep.to_s).nil?
       end
+
+      # The whole list at once, for a reload. true when it changed.
+      def flood_replace(list)
+        list = list.map(&:to_s).uniq
+        return false if list == @flood
+
+        @flood.replace(list)
+        true
+      end
     end
   end
 end

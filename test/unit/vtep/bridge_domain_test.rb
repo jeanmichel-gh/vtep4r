@@ -57,4 +57,23 @@ class Bridge_domain_Test < Test::Unit::TestCase
       VXLAN::Vtep::Switch.new(local: '10.0.0.1', vnis: [{ vni: 1, ports: ['eth2'] }, { vni: 1, ports: ['eth3'] }])
     end
   end
+
+  def test_flood_replace
+    bd = BridgeDomain.new(vni: 100, ports: [], flood: %w[10.0.0.2])
+    refute bd.flood_replace(%w[10.0.0.2])
+    assert bd.flood_replace(%w[10.0.0.3 10.0.0.3 10.0.0.4])
+    assert_equal %w[10.0.0.3 10.0.0.4], bd.flood
+  end
+
+  def test_a_vni_added_and_removed_at_run_time
+    sw = VXLAN::Vtep::Switch.new(local: '10.0.0.1', vnis: [{ vni: 1, ports: ['eth2'] }])
+    bd = sw.add_vni(vni: 2, ports: ['eth3'])
+    assert_equal bd, sw.bridge(2)
+    assert_raise(ArgumentError) { sw.add_vni(vni: 3, ports: ['eth3']) }
+    assert_equal bd, sw.del_vni(2)
+    assert_nil sw.del_vni(2)
+    frame = ['ffffffffffff020000000101' + '88b5' + '00' * 46].pack('H*')
+    assert_equal [:unknown_port], sw.from_port('eth3', frame, 0).map(&:reason)
+    assert sw.add_vni(vni: 3, ports: ['eth3'])
+  end
 end

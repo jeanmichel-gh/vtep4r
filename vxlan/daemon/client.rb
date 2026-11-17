@@ -85,6 +85,41 @@ module VXLAN
         raise Error, "vtep4rd answered something that is not JSON: #{e.message[0, 120]}"
       end
 
+      # Calls a streaming method and yields every line it answers, parsed:
+      # the result line first, then one per event or keepalive, as bgp4r's
+      # Client#stream. Return false from the block to stop, which sends
+      # events.unsubscribe. Error lines are yielded, not raised: a stream
+      # carries an error for one stray request and goes on.
+      def stream(method, params = {})
+        @sock ||= UNIXSocket.new(@path)
+        @id += 1
+        @sock.write("#{JSON.generate(id: @id, method: method, params: params)}\n")
+        while (line = @sock.gets)
+          break if yield(JSON.parse(line)) == false
+        end
+        unsubscribe
+      rescue Errno::ENOENT, Errno::ECONNREFUSED
+        raise Error, "no vtep4rd answers on #{@path}"
+      rescue Errno::EPIPE, Errno::ECONNRESET, IOError
+        @sock = nil
+        raise Error, 'lost the connection to vtep4rd'
+      end
+
+      # Ends a stream this client started; the reply is read so the
+      # connection takes requests again.
+      def unsubscribe
+        return nil unless @sock && !@sock.closed?
+
+        @id += 1
+        @sock.write("#{JSON.generate(id: @id, method: 'events.unsubscribe', params: {})}\n")
+        while (line = @sock.gets)
+          break if JSON.parse(line)['id'] == @id
+        end
+        nil
+      rescue Errno::EPIPE, Errno::ECONNRESET, IOError
+        @sock = nil
+      end
+
       def close
         @sock&.close
         @sock = nil

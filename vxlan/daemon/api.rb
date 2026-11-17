@@ -46,32 +46,58 @@ module VXLAN
     # Every method runs on the Vtepd's worker thread, through on_worker,
     # so it sees and changes the state between two frames, never during
     # one. A mutating method is a name of its own, never a flag on a read.
+    # vni.add, vni.del and config.reload call Vtepd methods that go to the
+    # worker themselves, so they are not wrapped again: a block on the
+    # worker waiting for the worker would never return.
+    #
+    # events.subscribe turns the connection into a stream, in bgp4rd's
+    # form (bgp4r docs/daemon.md, "The event stream"):
+    #
+    #   -> {"id":2,"method":"events.subscribe","params":{"kinds":["mac"],"since":120}}
+    #   <- {"id":2,"result":{"seq":131,"replayed":11,"kinds":["mac"]}}
+    #   <- {"event":{"seq":121,"time":"...","level":"info","kind":"mac",...}}
+    #   <- {"keepalive":"2026-11-17T21:20:15.004Z","seq":131}
+    #   -> {"id":3,"method":"events.unsubscribe"}
+    #   <- {"id":3,"result":{"unsubscribed":true}}
+    #
+    # Any other request on a streaming connection is refused with a line
+    # of its own and the stream goes on.
     class Api
       MAX_LINE = 1 << 20
       MAX_CLIENTS = 32
       IDLE = 900
-      VERSION = 1   # of this API, raised when a method changes incompatibly
+      KEEPALIVE = 15 # seconds between keepalive lines on an event stream
+      VERSION = 1    # of this API, raised when a method changes incompatibly
 
       # name => ->(api, params) { result }
       METHODS = {
-        'api.info' => ->(_a, _p) { Api.info },
+        'api.info' => ->(a, _p) { a.info },
         'show.status' => ->(a, _p) { a.status },
         'show.vnis' => ->(a, _p) { a.on { |sw, _now| sw.bridges.map { |bd| a.vni_row(sw, bd) } } },
         'show.macs' => ->(a, p) { a.macs(p) },
         'show.counters' => ->(a, _p) { a.counters },
+        'vni.add' => ->(a, p) { a.vni_add(p) },
+        'vni.del' => ->(a, p) { a.vni_del(p) },
         'vni.flood.add' => ->(a, p) { a.flood(p, :add) },
         'vni.flood.del' => ->(a, p) { a.flood(p, :del) },
         'mac.add' => ->(a, p) { a.mac_add(p) },
         'mac.del' => ->(a, p) { a.mac_del(p) },
-        'mac.flush' => ->(a, p) { a.mac_flush(p) }
+        'mac.flush' => ->(a, p) { a.mac_flush(p) },
+        'config.reload' => ->(a, _p) { a.reload }
       }.freeze
 
+      # The two that turn a connection into a stream and back, which
+      # handle cannot answer since a stream is many lines.
+      STREAM_METHODS = %w[events.subscribe events.unsubscribe].freeze
+
       def self.names
-        METHODS.keys.sort
+        (METHODS.keys + STREAM_METHODS).sort
       end
 
-      def self.info
-        { version: VXLAN::VERSION, api: VERSION, methods: names }
+      # The version, the methods, and where the event stream has got to.
+      def info
+        { version: VXLAN::VERSION, api: VERSION, methods: Api.names,
+          event_kinds: Events::KINDS.map(&:to_s), event_seq: @vtepd.events.seq }
       end
 
       class InUse < StandardError; end
@@ -90,10 +116,15 @@ module VXLAN
 
       attr_reader :path
 
-      def initialize(vtepd, path:, logger: nil, clock: nil)
+      # +config_path+ is the file config.reload reads again; +keepalive+
+      # the seconds between keepalive lines on a stream, which a test
+      # shortens.
+      def initialize(vtepd, path:, logger: nil, clock: nil, config_path: nil, keepalive: KEEPALIVE)
         @vtepd = vtepd
         @path = path
         @logger = logger
+        @config_path = config_path
+        @keepalive = keepalive
         @clock = clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
         @started = @clock.call
         @clients = []
@@ -130,10 +161,13 @@ module VXLAN
       def handle(req)
         id = req['id']
         name = req['method'].to_s
-        fn = METHODS[name]
+        fn = METHODS[name] || (STREAM_METHODS.include?(name) && :stream)
         return { id: id, error: "unknown method #{name.inspect}; this vtep4rd answers #{Api.names.join(', ')}" } unless fn
 
         params = req['params'].is_a?(Hash) ? req['params'] : {}
+        return { id: id, error: 'events.subscribe is a stream: send it on the socket' } if name == 'events.subscribe'
+        return { id: id, result: { unsubscribed: false } } if name == 'events.unsubscribe'
+
         { id: id, result: fn.call(self, params) }
       rescue ArgumentError, KeyError, Datalink::Error => e
         { id: id, error: e.message }
@@ -152,7 +186,7 @@ module VXLAN
       def status
         on do |sw, now|
           { version: VXLAN::VERSION, local: sw.local, mtu: sw.mtu, receive_policy: sw.policy,
-            vnis: sw.bridges.map(&:vni), uptime: (now - @started).round(1) }
+            vnis: sw.bridges.map(&:vni), ports: @vtepd.port_names, uptime: (now - @started).round(1) }
         end
       end
 
@@ -214,6 +248,32 @@ module VXLAN
         end
       end
 
+      # A VNI added: the same keys as a vnis entry of the file.
+      def vni_add(p)
+        unknown = p.keys - Config::VNI
+        raise ArgumentError, "unknown vni key #{unknown.join(', ')}" unless unknown.empty?
+
+        v = Config.new('local' => '0.0.0.0', 'vnis' => [p]).vnis.first
+        bd = @vtepd.add_vni(**v)
+        { vni: bd.vni, ports: bd.ports, mode: bd.mode, flood: bd.flood }
+      rescue Config::Error => e
+        raise ArgumentError, e.message
+      end
+
+      def vni_del(p)
+        bd = @vtepd.del_vni(Integer(p.fetch('vni')))
+        { vni: bd.vni, macs: bd.macs.size }
+      end
+
+      # The file again, as SIGHUP.
+      def reload
+        raise ArgumentError, 'this vtep4rd was not started from a file' unless @config_path
+
+        @vtepd.reload(Config.load(@config_path))
+      rescue Config::Error => e
+        raise ArgumentError, "#{@config_path}: #{e.message}"
+      end
+
       private
 
       def bridge(sw, p)
@@ -253,25 +313,78 @@ module VXLAN
       end
 
       def serve(sock)
-        while sock.wait_readable(IDLE) && (line = sock.gets(MAX_LINE))
-          unless line.end_with?("\n") || line.bytesize < MAX_LINE
-            write(sock, error: "request longer than #{MAX_LINE} octets")
-            return
+        while sock.wait_readable(IDLE)
+          req = read_request(sock)
+          next if req == :skip
+          break if req.nil?
+
+          if req['method'] == 'events.subscribe'
+            stream(sock, req) or break
+          else
+            write(sock, handle(req))
           end
-          req = begin
-            JSON.parse(line)
-          rescue JSON::ParserError => e
-            write(sock, error: "bad JSON: #{e.message[0, 120]}")
-            next
-          end
-          unless req.is_a?(Hash)
-            write(sock, error: 'a request is a JSON object')
-            next
-          end
-          write(sock, handle(req))
         end
       rescue IOError, SystemCallError
         nil
+      end
+
+      # One request off the socket: a Hash, :skip after a bad line it
+      # answered, or nil when the connection is done.
+      def read_request(sock)
+        line = sock.gets(MAX_LINE) or return nil
+        unless line.end_with?("\n") || line.bytesize < MAX_LINE
+          write(sock, error: "request longer than #{MAX_LINE} octets")
+          return nil
+        end
+        req = JSON.parse(line)
+        return req if req.is_a?(Hash)
+
+        write(sock, error: 'a request is a JSON object')
+        :skip
+      rescue JSON::ParserError => e
+        write(sock, error: "bad JSON: #{e.message[0, 120]}")
+        :skip
+      end
+
+      # The connection's own thread polls three things in turn, as
+      # bgp4rd's does: a line arriving, events waiting, and the keepalive
+      # deadline. true when events.unsubscribe ended the stream and the
+      # connection takes requests again; false when it is done.
+      def stream(sock, req)
+        params = req['params'].is_a?(Hash) ? req['params'] : {}
+        sub = begin
+          @vtepd.events.subscribe(kinds: params['kinds'] && Array(params['kinds']), since: params['since'])
+        rescue ArgumentError, TypeError => e
+          write(sock, id: req['id'], error: e.message)
+          return true
+        end
+        write(sock, id: req['id'], result: { seq: @vtepd.events.seq, replayed: sub.replayed, kinds: sub.kinds&.map(&:to_s) })
+        quiet_since = @clock.call
+        loop do
+          if sock.wait_readable(0)
+            r = read_request(sock)
+            return false if r.nil?
+            next if r == :skip
+
+            if r['method'] == 'events.unsubscribe'
+              @vtepd.events.unsubscribe(sub)
+              sub = nil
+              write(sock, id: r['id'], result: { unsubscribed: true })
+              return true
+            end
+            write(sock, id: r['id'], error: "#{r['method']} refused: this connection is streaming events; " \
+                                            'send events.unsubscribe, or use another connection')
+          end
+          events = sub.take(0.2)
+          events.each { |e| write(sock, event: e.to_h) }
+          quiet_since = @clock.call unless events.empty?
+          next unless @clock.call - quiet_since >= @keepalive
+
+          write(sock, keepalive: Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ'), seq: @vtepd.events.seq)
+          quiet_since = @clock.call
+        end
+      ensure
+        @vtepd.events.unsubscribe(sub) if sub
       end
 
       def write(sock, obj)

@@ -25,6 +25,7 @@ require 'vtep4r'
 require 'vxlan/daemon/vtepd'
 require 'vxlan/daemon/api'
 require 'datalink/backends/loopback'
+require 'fileutils'
 
 # The API's methods through #handle, with no socket: a Vtepd on a
 # loopback port and an in-memory tunnel.
@@ -35,7 +36,7 @@ class Api_Test < Test::Unit::TestCase
     @now = 100.0
     config = Daemon::Config.new('local' => '10.255.0.11',
                                 'vnis' => [{ 'vni' => 100, 'ports' => ['eth2'], 'flood' => ['10.255.0.12'] }])
-    @vtepd = Daemon::Vtepd.new(config, ports: Vtep::Ports.loopback('eth2' => Datalink::Backends::Loopback::Wire.new),
+    @vtepd = Daemon::Vtepd.new(config, ports: Vtep::Ports.loopback({ 'eth2' => Datalink::Backends::Loopback::Wire.new, 'eth3' => Datalink::Backends::Loopback::Wire.new }, ['eth2']),
                                        tunnel: Vtep::MemoryTunnel.new('10.255.0.11', Vtep::MemoryTunnel::Fabric.new),
                                        clock: -> { @now }, logger: ->(*) {}, age_every: nil).start
     @api = Daemon::Api.new(@vtepd, path: '/nonexistent/never-started.sock', clock: -> { @now })
@@ -59,7 +60,7 @@ class Api_Test < Test::Unit::TestCase
 
   def test_an_unknown_method_names_the_ones_that_exist
     r = call('show.foo')
-    assert_match(/unknown method "show.foo"; this vtep4rd answers api.info, mac.add/, r[:error])
+    assert_match(/unknown method "show.foo"; this vtep4rd answers api.info, config.reload, events.subscribe/, r[:error])
   end
 
   def test_show_status
@@ -122,5 +123,62 @@ class Api_Test < Test::Unit::TestCase
     def @vtepd.counters = raise(NoMethodError, 'boom')
     assert_equal 'internal error: NoMethodError', api.handle('id' => 1, 'method' => 'show.counters')[:error]
     assert_equal :error, lines[0][0]
+  end
+
+  def test_info_says_where_the_event_stream_is
+    i = call('api.info')[:result]
+    assert_equal %w[mac drop config overflow], i[:event_kinds]
+    assert_kind_of Integer, i[:event_seq]
+    assert_include i[:methods], 'events.subscribe'
+  end
+
+  def test_a_stream_needs_the_socket
+    assert_match(/is a stream/, call('events.subscribe')[:error])
+    assert_equal({ unsubscribed: false }, call('events.unsubscribe')[:result])
+  end
+
+  def test_vni_add_opens_its_port_and_vni_del_closes_it
+    r = call('vni.add', 'vni' => 200, 'ports' => ['eth3'], 'flood' => ['10.255.0.13'])[:result]
+    assert_equal({ vni: 200, ports: ['eth3'], mode: :learn, flood: ['10.255.0.13'] }, r)
+    assert_equal [100, 200], call('show.status')[:result][:vnis]
+    assert_match(/port eth3 in vni 200 and 300/, call('vni.add', 'vni' => 300, 'ports' => ['eth3'])[:error])
+    assert_match(/vni 100 twice/, call('vni.add', 'vni' => 100, 'ports' => [])[:error])
+    assert_match(/unknown vni key port/, call('vni.add', 'vni' => 400, 'port' => ['eth9'])[:error])
+    assert_equal %w[eth2 eth3], call('show.status')[:result][:ports]
+    assert_equal({ vni: 200, macs: 0 }, call('vni.del', 'vni' => 200)[:result])
+    assert_equal [[100], ['eth2']], call('show.status')[:result].values_at(:vnis, :ports)
+    assert_match(/no vni 200/, call('vni.del', 'vni' => 200)[:error])
+  end
+
+  def test_config_reload_without_a_file
+    assert_match(/not started from a file/, call('config.reload')[:error])
+  end
+
+  def test_config_reload
+    dir = File.join(ENV['TMPDIR'] || '/tmp', "vtep4r-r#{Process.pid}-#{rand(1 << 16)}")
+    Dir.mkdir(dir)
+    file = File.join(dir, 'f.yml')
+    api = Daemon::Api.new(@vtepd, path: '/nonexistent', config_path: file)
+    File.write(file, "local: 10.255.0.11\nageing: 60\nvnis:\n  - vni: 100\n    ports: [eth2]\n    flood: [10.255.0.12, 10.255.0.14]\n" \
+                     "  - vni: 200\n    ports: [eth3]\n")
+    r = api.handle('id' => 1, 'method' => 'config.reload')[:result]
+    assert_equal({ added: [200], removed: [], replaced: [], changed: [100], needs_restart: [] }, r)
+    assert_equal [['10.255.0.12', '10.255.0.14'], 60], call('show.vnis')[:result][0].values_at(:remote_vteps, :ageing)
+
+    File.write(file, "local: 10.255.0.99\nvnis:\n  - vni: 100\n    ports: [eth2]\n    mode: evpn\n")
+    r = api.handle('id' => 2, 'method' => 'config.reload')[:result]
+    assert_equal({ added: [], removed: [200], replaced: [100], changed: [], needs_restart: [:local] }, r)
+    assert_equal '10.255.0.11', call('show.status')[:result][:local]
+
+    File.write(file, "local: [\n")
+    assert_match(/f.yml/, api.handle('id' => 3, 'method' => 'config.reload')[:error])
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  def test_a_reload_described_in_words
+    assert_equal 'nothing changed', Daemon::Vtepd.describe(added: [], removed: [], needs_restart: [])
+    assert_equal 'added 200, 300; needs_restart local',
+                 Daemon::Vtepd.describe(added: [200, 300], removed: [], needs_restart: [:local])
   end
 end

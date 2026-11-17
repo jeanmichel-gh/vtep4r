@@ -40,10 +40,10 @@ Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
 `validation.rb`, `fault.rb`, `vtep.rb` and `vtep/` (`actions.rb`,
 `mac_table.rb`, `bridge_domain.rb`, `forwarder.rb`, `switch.rb`,
 `ports.rb`, `tunnel.rb`), `logging.rb`, `daemon/` (`config.rb`,
-`vtepd.rb`, `api.rb`, `client.rb`, `cli.rb`, `server.rb`),
-`exe/vtep4rd` and `exe/vtep4r-cli`, the unit tier, three functional
-tests, `specs/rfc7348.txt` and one capture in `test/fixtures/`. The
-rest is planned.
+`vtepd.rb`, `events.rb`, `api.rb`, `client.rb`, `cli.rb`,
+`server.rb`), `exe/vtep4rd` and `exe/vtep4r-cli`, the unit tier, four
+functional tests, `specs/rfc7348.txt` and one capture in
+`test/fixtures/`. The rest is planned.
 
 ```
 vtep4r.rb                entry point, requires everything
@@ -179,15 +179,18 @@ in-memory tunnel. No root. CI runs each file:
 DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/two_vteps_test.rb
 DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/api_socket_test.rb
 DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/programs_test.rb
+DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/events_stream_test.rb
 ```
 
 `programs_test.rb` runs `exe/vtep4rd` and `exe/vtep4r-cli` as a person
-does. A vtep4rd with no ports opens no raw socket, and UDP port 4789 on
-127.0.0.x needs no root, so it runs anywhere.
+does, SIGHUP included. A vtep4rd with no ports opens no raw socket, and
+UDP port 4789 on 127.0.0.x needs no root, so it runs anywhere.
 
 A test that starts threads is run many times before it is trusted:
-`two_vteps_test.rb` passed 20 of 20 when it was written, and the three
-files together 10 of 10 when the last was added.
+`two_vteps_test.rb` passed 20 of 20 when it was written, and the four
+files together 10 of 10 when the last was added. A test that waits for
+something a thread sends waits with a deadline, so a regression fails
+it rather than hanging it.
 
 Planned: the lab tier needs root and the kernel's `vxlan`, or FRR.
 `docs/running-tests.md` will be generated from the test list, as
@@ -232,8 +235,8 @@ The phases are in `docs/design/vtep4r.md`, "Work".
 | 3. `Validation` and `Fault` | Done, #3 |
 | 4a. The VTEP's pure core | Done, #4 |
 | 4b. The edges and the daemon loop | Done, #5 |
-| 4c. The control API, `vtep4rd`, `vtep4r-cli` | This pull request |
-| 4d. Events, `vni.add`/`del`, `config.reload` | Not started |
+| 4c. The control API, `vtep4rd`, `vtep4r-cli` | Done, #6 |
+| 4d. Events, `vni.add`/`del`, `config.reload` | This pull request |
 | 5. `Gen` and `vtep4r-sim` | Not started |
 | 6. Image, lab tier, fault matrix | Not started |
 | 7. `vtep4r capture` | Not started |

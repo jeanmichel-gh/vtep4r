@@ -42,4 +42,23 @@ class Ports_Test < Test::Unit::TestCase
     ports&.close
     host&.close
   end
+
+  def test_a_port_opens_and_closes_at_run_time
+    require 'datalink/backends/loopback'
+    w = Loopback::Wire.new
+    ports = VXLAN::Vtep::Ports.loopback({ 'eth2' => Loopback::Wire.new, 'eth3' => w }, ['eth2'])
+    refute ports.open?('eth3')
+    assert ports.open('eth3')
+    refute ports.open('eth3')
+    assert_equal %w[eth2 eth3], ports.names
+    assert ports.close_port('eth3')
+    refute ports.close_port('eth3')
+    assert_raise(IOError) { ports.send('eth3', 'x'.b) }
+  ensure
+    ports&.close
+  end
+
+  def test_a_port_with_no_opener
+    assert_raise(ArgumentError) { VXLAN::Vtep::Ports.new.open('eth2') }
+  end
 end
