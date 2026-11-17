@@ -26,8 +26,8 @@ both programs. bgp4rd will drive `vtep4rd` for EVPN (bgp4r's P5).
 The plan is routescope `docs/design/evpn-vxlan-lab.md`. This
 repository's own design is `docs/design/vtep4r.md`.
 
-**Status: design only.** No code until the owner approves both
-documents.
+**Status: design approved, 2026-11-17.** No code yet. Step 1 is in
+datalink-socket.
 
 **bgp4r is the model.** Its CLAUDE.md, `docs/building-objects.md`,
 `docs/protocol-testing.md` and `docs/daemon.md` are the long form of

@@ -1,6 +1,7 @@
 # vtep4r, VXLAN in Ruby
 
-Status: draft, 2026-11-17. Waiting for the owner's approval.
+Status: approved by the owner, 2026-11-17. No code yet: step 1 is
+datalink-socket's.
 
 The lab plan, with the trials behind this design, is routescope
 `docs/design/evpn-vxlan-lab.md`. This document is vtep4r's part of it.
