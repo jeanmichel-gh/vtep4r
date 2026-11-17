@@ -26,22 +26,26 @@ both programs. bgp4rd will drive `vtep4rd` for EVPN (bgp4r's P5).
 The plan is routescope `docs/design/evpn-vxlan-lab.md`. This
 repository's own design is `docs/design/vtep4r.md`.
 
-**Status: design approved, 2026-11-17.** No code yet. Step 1 is in
-datalink-socket.
+**Status: design approved, 2026-11-17.** Step 1 is done in
+datalink-socket (#7). Step 2, the skeleton with `Header` and `Packet`,
+is this repository's first code.
 
 **bgp4r is the model.** Its CLAUDE.md, `docs/building-objects.md`,
 `docs/protocol-testing.md` and `docs/daemon.md` are the long form of
 the rules below. When this file does not say, do what bgp4r does.
 
-## Layout, as planned
+## Layout
+
+Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
+the unit tier, `specs/rfc7348.txt` and one capture in `test/fixtures/`.
+The rest is planned.
 
 ```
 vtep4r.rb                entry point, requires everything
 vxlan/version.rb         VXLAN::VERSION, the one place for it
-vxlan/common.rb          shared helpers
-vxlan/logging.rb         the injected logger, log(level, message)
 vxlan/header.rb          the 8-octet VXLAN header
-vxlan/packet.rb          a header and its inner Ethernet frame
+vxlan/packet.rb          a header and its inner Ethernet frame, kept as octets
+vxlan/logging.rb         the injected logger, log(level, message)
 vxlan/validation.rb      every receive-side rule, with its RFC section
 vxlan/fault.rb           the fault catalog, VXLAN::Fault::CATALOG
 vxlan/gen.rb, gen/       traffic generation: a spec in, frames out
@@ -53,6 +57,8 @@ exe/                     vtep4rd, vtep4r-sim, vtep4r-cli, vtep4r
 test/unit/               one file per source file, no privileges
 test/functional/         whole programs in one process, in-memory edges
 test/lab/                against the kernel's VXLAN and FRR
+test/fixtures/           captures: kernel-vxlan.pcap, the kernel's VXLAN on Linux 7.0
+specs/                   the RFCs, as text, to cite from
 docs/                    one guide per feature; docs/design/ for specs
 ```
 
@@ -72,8 +78,12 @@ docs/                    one guide per feature; docs/design/ for specs
     as a VNI above 24 bits, since the alternative is silently sending
     another value. Wire bytes stay open.
 - **Keep what you cannot read, and write it back.** A header parsed
-  from the wire keeps its eight octets. Its hash carries `:bits` when a
-  reserved bit is set. `encode` gives back what arrived, byte for byte.
+  from the wire keeps every bit, and its hash adds `flags`, `reserved1`
+  or `reserved2` only when that field is not its default, so an
+  ordinary header hashes as `{ vni: 100 }`. A packet keeps its inner
+  frame as the octets that came and parses them only on demand; fewer
+  octets than a header are kept whole as `short`. `encode` gives back
+  what arrived, byte for byte.
   Echoing a reserved field is intended: bgp4r's owner confirmed it on
   2026-10-29, for the same reason as the first bullet.
 - **The receiver ignores what RFC 7348 says to ignore.** Section 5 says
@@ -86,6 +96,13 @@ docs/                    one guide per feature; docs/design/ for specs
   returns wire bytes. `to_hash` returns a hash that round trips through
   `new`. `to_s` returns the human form. bgp4r's
   `docs/building-objects.md` is the guide.
+  - **A String is always wire bytes here.** No field of a `Header` or a
+    `Packet` is a String, so a String argument can only be octets.
+    vtep4r therefore has no mark on packed strings and does not patch
+    `Array#pack`, where bgp4r does. Keep it that way: a class whose
+    field is a String takes it as a keyword in a hash.
+  - **A constructor does not consume its String.** It reads with
+    `byteslice`, never `slice!`, so the caller's octets are unchanged.
 - **Tests check round trips:** build, encode, parse back, compare. Use
   real hex captures, from tcpdump or Wireshark, where there is one. One
   test file per source file, with the same name and `_test.rb`.
@@ -127,17 +144,29 @@ docs/                    one guide per feature; docs/design/ for specs
 The kernel's VXLAN and FRR are what vtep4r is tested against, in the
 fault matrix and in routescope's labs. They do not replace it.
 
-## Running tests, as planned
+## Running tests
 
-Ruby 3.3, 3.4 and 4.0, with test-unit. The load path is the repository
-root:
+Ruby 3.3, 3.4 and 4.0, with test-unit. CI runs the unit tier twice,
+the second time with `--enable-frozen-string-literal`.
 
 ```sh
-ruby test/run_unit.rb                      # the unit tier, no root
-ruby -I. test/unit/header_test.rb          # one file
+BUNDLE_PATH=~/.cache/bundle-vtep4r bundle install   # outside the repo
+BUNDLE_PATH=~/.cache/bundle-vtep4r bundle exec ruby test/run_unit.rb
 ```
 
-The functional tier runs whole programs in one process with
+datalink-socket is not on RubyGems yet, so the Gemfile takes it from its
+repository. Without Bundler, point `DATALINK_LIB` at a checkout's
+`lib/`:
+
+```sh
+DATALINK_LIB=~/datalink-socket/lib ruby test/run_unit.rb
+DATALINK_LIB=~/datalink-socket/lib ruby -I. -I$DATALINK_LIB test/unit/header_test.rb
+```
+
+Check the test count against `grep -c 'def test_'`: a test defined twice
+in one class, or after `private`, never runs and nothing says so.
+
+Planned: the functional tier runs whole programs in one process with
 datalink-socket's loopback backend. The lab tier needs root and the
 kernel's `vxlan`, or FRR. `docs/running-tests.md` will be generated from
 the test list, as bgp4r's is.
@@ -172,4 +201,14 @@ the test list, as bgp4r's is.
 
 ## Where the work is going
 
-The phases are in `docs/design/vtep4r.md`, "Work". None has started.
+The phases are in `docs/design/vtep4r.md`, "Work".
+
+| Step | Status |
+| --- | --- |
+| 1. datalink-socket: sent frames | Done, datalink-socket #7 |
+| 2. Skeleton, `Header`, `Packet` | This pull request |
+| 3. `Validation` and `Fault` | Not started |
+| 4. The VTEP, `vtep4rd`, `vtep4r-cli` | Not started |
+| 5. `Gen` and `vtep4r-sim` | Not started |
+| 6. Image, lab tier, fault matrix | Not started |
+| 7. `vtep4r capture` | Not started |
