@@ -21,6 +21,7 @@
 #++
 
 require 'test/unit'
+require 'stringio'
 require 'vxlan/logging'
 
 class Logging_Test < Test::Unit::TestCase
