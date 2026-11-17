@@ -1,10 +1,31 @@
 # vtep4r
 
 VXLAN in Ruby (RFC 7348): a library to build, parse and send VXLAN,
-valid or not, for routing labs and protocol tests. A VTEP and an
-injector will be built on it. `docs/design/vtep4r.md` is the plan.
+valid or not, for routing labs and protocol tests. A VTEP, `vtep4rd`,
+is built on it; an injector, `vtep4r-sim`, is next.
+`docs/design/vtep4r.md` is the plan.
 
-Today it has the header and the packet:
+## vtep4rd
+
+```sh
+vtep4rd -f vtep4rd.yml                       # needs CAP_NET_RAW for its ports
+vtep4r-cli show.vnis                         # each VNI, its ports and flood list
+vtep4r-cli show.macs vni=100                 # a VNI's MAC table
+vtep4r-cli show.counters                     # frames per port and peer, drops
+vtep4r-cli mac.add vni=100 mac=02:00:00:00:01:09 vtep=10.255.0.13
+```
+
+```yaml
+local: 10.255.0.11
+vnis:
+  - vni: 100
+    ports: [eth2]
+    flood: [10.255.0.12]
+```
+
+## The library
+
+The header and the packet:
 
 ```ruby
 require 'vtep4r'
