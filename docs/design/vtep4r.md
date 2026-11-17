@@ -164,8 +164,9 @@ It answers `packets` and `expected`: what it meant to send, as data.
 | `Vtep::MacTable` | MAC to a local port or a remote VTEP, with its origin (`learned` or `api`), age and sequence |
 | `Vtep::Forwarder` | the pure function: a frame or packet in, actions out (`Deliver`, `Tunnel`, `Learn`, `Note` for an ignored finding, `Drop` with a reason). It reads the tables and never changes them |
 | `Vtep::Switch` | the VTEP's state and the one place it changes: it asks the Forwarder, applies its `Learn` actions, records events (`learned`, `moved`, `aged`), counts drops and ignored findings, and hands `Deliver` and `Tunnel` to the edges |
-| Ports | datalink-socket Linux sockets, skipping frames this namespace sent |
-| Tunnel | one UDP socket on the loopback, port 4789 |
+| Ports | datalink-socket Linux sockets with `ignore_outgoing: true`, so the frames this namespace sends are skipped |
+| Tunnel | a UDP socket on the VTEP's address, port 4789, to receive; to send, a pool of up to 64 sockets, one bound to each source port in use, since a UDP socket sends from the one port it is bound to. A port that cannot be bound falls back to the receiving socket |
+| `Daemon::Vtepd` | one worker thread owns the `Switch`; each port, the tunnel and the ager have a thread that only queues work, so no reader blocks. Anything else that reads or changes the state runs on the worker, through `on_worker` |
 | Ager | the timer, 300 s by default, as the kernel's (trial 2's `ip -d link`) |
 | Counters | received and sent per port and per peer; drops by reason |
 
@@ -293,12 +294,18 @@ routescope's.
    round trips run on the kernel's own packets,
    `test/fixtures/kernel-vxlan.pcap`.
 3. `Validation` and `Fault`, with their tests. Done, #3.
-4. The VTEP, in two pull requests, to keep each small:
+4. The VTEP, in three pull requests, to keep each small:
    - 4a, the pure core: `MacTable`, `BridgeDomain`, `Forwarder`,
      `Switch`, unit tests on bytes with the time as an argument, and
-     two switches wired through each other's tunnel actions.
-   - 4b, the edges: ports, tunnel, ager, `VXLAN::Logging`, `vtep4rd`
-     with its file and API, `vtep4r-cli`, the functional tests.
+     two switches wired through each other's tunnel actions. Done, #4.
+   - 4b, the edges and the daemon loop: `Ports`, `UdpTunnel` and
+     `MemoryTunnel`, `VXLAN::Logging`, `Daemon::Config`,
+     `Daemon::Vtepd`, and a functional test of two of them in one
+     process. Checked live against the kernel's `vxlan` in network
+     namespaces, 2026-11-17: pings both ways, two MACs learned, no
+     drops.
+   - 4c, the control surface: the API on the Unix socket, its client,
+     `vtep4r-cli`, `exe/vtep4rd`, `exe/vtep4r-cli`.
 5. `Gen` and `vtep4r-sim`.
 6. The image, the lab tier and the fault matrix.
 7. `vtep4r capture`, which dissects VXLAN with the inner frame.
