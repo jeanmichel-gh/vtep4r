@@ -1,0 +1,104 @@
+#--
+# Copyright 2026 Jean-Michel Esnault.
+# All rights reserved.
+# See LICENSE.txt for permissions.
+#
+#
+# This file is part of VTEP4R.
+#
+# VTEP4R is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# VTEP4R is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with VTEP4R.  If not, see <http://www.gnu.org/licenses/>.
+#++
+
+require 'datalink'
+require 'vxlan/vtep/actions'
+
+module VXLAN
+  module Vtep
+    # One VNI's MAC table: MAC to a Location.
+    #
+    # An entry is :learned, from traffic, and ages out after +ageing+
+    # seconds unseen; or :api, set by vtep4rd's API for EVPN, which stays
+    # until deleted and which learning never overwrites. The time is an
+    # argument, never read from a clock, so a test is the clock.
+    class MacTable
+      Entry = Struct.new(:mac, :location, :origin, :seen, :seq, :moves)
+
+      attr_reader :ageing
+
+      def initialize(ageing: 300)
+        @ageing = ageing
+        @entries = {}
+      end
+
+      # :learned for a new MAC, :moved for one seen at another location,
+      # nil otherwise.
+      def learn(mac, location, now)
+        e = @entries[mac]
+        if e.nil?
+          @entries[mac] = Entry.new(mac, location, :learned, now, 0, 0)
+          return :learned
+        end
+        return nil if e.origin == :api
+
+        e.seen = now
+        return nil if e.location == location
+
+        e.location = location
+        e.moves += 1
+        :moved
+      end
+
+      # An entry from the API. +seq+ is bgp4rd's, for RFC 7432 MAC
+      # Mobility; vtep4rd only keeps it.
+      def add(mac, location, seq: 0)
+        prev = @entries[mac]
+        moves = prev ? prev.moves + (prev.location == location ? 0 : 1) : 0
+        @entries[mac] = Entry.new(mac, location, :api, nil, seq, moves)
+      end
+
+      def lookup(mac)
+        @entries[mac]
+      end
+
+      def delete(mac)
+        !@entries.delete(mac).nil?
+      end
+
+      def flush(origin: nil)
+        origin ? @entries.delete_if { |_, e| e.origin == origin } : @entries.clear
+        self
+      end
+
+      # The learned MACs unseen for +ageing+ seconds at +now+, removed.
+      def age(now)
+        gone = @entries.values.select { |e| e.origin == :learned && now - e.seen >= @ageing }.map(&:mac)
+        gone.each { |m| @entries.delete(m) }
+        gone
+      end
+
+      def size
+        @entries.size
+      end
+
+      # One row per MAC, for show.macs and routescope's evpn_macs.
+      def rows(now:)
+        @entries.values.map do |e|
+          { mac: e.mac.to_s, type: e.location.port? ? :local : :remote,
+            port: (e.location.name if e.location.port?), vtep: (e.location.name if e.location.vtep?),
+            origin: e.origin, age: (now - e.seen if e.seen), seq: e.seq, moves: e.moves }
+        end
+      end
+    end
+  end
+end
