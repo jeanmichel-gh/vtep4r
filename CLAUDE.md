@@ -116,8 +116,11 @@ docs/                    one guide per feature; docs/design/ for specs
 - Two space indent.
 - A new Ruby file or Dockerfile starts with the GPL header from bgp4r's
   `bgp/observable.rb`, with `Copyright 2026 Jean-Michel Esnault.` and
-  "This file is part of VTEP4R". The license is bgp4r's, GPL 3 or
-  later, unless the owner says otherwise.
+  "This file is part of VTEP4R". The license for now is GPL 3 or
+  later. The owner's rule (2026-11-17): a new repository takes the more
+  restrictive license, and licenses across the repositories are
+  reviewed together at the end. bgp4r itself is dual: GPL, or the
+  conditions in its `LICENSE.txt`.
 
 ## Other daemons are for interop
 

@@ -268,7 +268,9 @@ routescope's.
 
 ## Open questions
 
-- **The license.** bgp4r's is GPL 3 or later. Same here?
+- **The license.** GPL 3 or later for now, the more restrictive choice
+  the owner wants for a new repository. Licenses across the
+  repositories are reviewed together at the end (owner, 2026-11-17).
 - **Speed.** The trial's round trip was 1.1 ms against the kernel's
   0.4. Labs need correctness, not line rate. Is a target wanted?
 - **VLAN tags.** 802.1Q on a port, mapping a VLAN to a VNI.
