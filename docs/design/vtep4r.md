@@ -101,18 +101,34 @@ check each line above against them.
 ### `VXLAN::Fault`
 
 The catalog of crafted packets, as bgp4r's `BGP::Fault::CATALOG`. Each
-entry has a name, a description, the RFC section, what the RFC expects
-(`deliver`, `drop` or `ignore`), and a block that builds the packet:
+entry has a name, a description, what RFC 7348 expects of the receiver
+(`drop`, or `ignore` for bits it must ignore), the RFC section, and a
+block that builds the packet for a receiver's VNI:
 
 ```ruby
-VXLAN::Fault::CATALOG[:r_bit_set]
-# {name: :r_bit_set, description: "an R bit set in the flags",
-#  rfc: "RFC 7348 5", expect: :ignore, build: #<Proc>}
+VXLAN::Fault.catalog.find { |e| e[:name] == :r_bit_set }
+# {name: :r_bit_set, description: "one R bit set beside the I flag",
+#  expect: :ignore, rfc: "RFC 7348 5", build: #<Proc>, vtep: false}
+VXLAN::Fault.build(:r_bit_set, vni: 100)   # a Packet, the kernel's ARP inside
+VXLAN::Fault.wire(:r_bit_set, vni: 100)    # its octets
 ```
 
-The first entries: `no_i_flag`, `r_bit_set`, `reserved1_set`,
-`reserved2_set`, `unknown_vni`, `short_header`, `no_inner_frame`,
-`inner_too_short`, `oversize_inner`.
+Built in step 3: `no_i_flag`, `r_bit_set`, `r_bits_all`,
+`reserved1_set`, `reserved2_set`, `unknown_vni`, `short_header`,
+`no_inner_frame`, `inner_too_short`.
+
+- `unknown_vni` is marked `vtep`: the codec cannot judge it, since a
+  VNI is valid only for the VTEP that serves it (RFC 7348 section 4.1).
+- RFC 7348 says nothing of a cut packet. The three short entries expect
+  a drop because a packet without a header and an inner frame cannot be
+  passed on. That is our reading, and their descriptions say so.
+- `oversize_inner` waits for the lab tier, step 6: what a receiver does
+  with a large inner frame depends on the path's MTU, which only a lab
+  has.
+
+A unit test checks that the catalog and `Validation` agree: under the
+`:rfc` policy, every entry but `unknown_vni` is dropped or delivered as
+its `expect` says, and has a finding.
 
 ### The fault matrix
 

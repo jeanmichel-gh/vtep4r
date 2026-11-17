@@ -24,3 +24,5 @@
 require 'vxlan/version'
 require 'vxlan/header'
 require 'vxlan/packet'
+require 'vxlan/validation'
+require 'vxlan/fault'
