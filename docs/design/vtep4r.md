@@ -162,7 +162,8 @@ It answers `packets` and `expected`: what it meant to send, as data.
 | --- | --- |
 | `Vtep::BridgeDomain` | one per VNI: its ports, MAC table, flood list and mode, `learn` or `evpn` |
 | `Vtep::MacTable` | MAC to a local port or a remote VTEP, with its origin (`learned` or `api`), age and sequence |
-| `Vtep::Forwarder` | the pure function: a frame or packet in, actions out (`Deliver`, `Tunnel`, `Learn`, `Drop` with a reason) |
+| `Vtep::Forwarder` | the pure function: a frame or packet in, actions out (`Deliver`, `Tunnel`, `Learn`, `Note` for an ignored finding, `Drop` with a reason). It reads the tables and never changes them |
+| `Vtep::Switch` | the VTEP's state and the one place it changes: it asks the Forwarder, applies its `Learn` actions, records events (`learned`, `moved`, `aged`), counts drops and ignored findings, and hands `Deliver` and `Tunnel` to the edges |
 | Ports | datalink-socket Linux sockets, skipping frames this namespace sent |
 | Tunnel | one UDP socket on the loopback, port 4789 |
 | Ager | the timer, 300 s by default, as the kernel's (trial 2's `ip -d link`) |
@@ -172,12 +173,18 @@ It answers `packets` and `expected`: what it meant to send, as data.
 
 From a host port, with a frame on VNI V:
 
-1. Learn the source MAC on that port, unless V is in `evpn` mode.
+1. Learn the source MAC on that port, in either mode. In `evpn` mode
+   too: bgp4rd advertises local MACs as type 2 routes, so they must be
+   learned. (Corrected in step 4a; the approved draft said "unless V is
+   in `evpn` mode".)
 2. A known unicast destination: deliver to its port, or tunnel to its
-   VTEP.
+   VTEP. One on the port it came from is dropped, `same_port`.
 3. Otherwise (broadcast, multicast, unknown unicast): deliver to every
    other port of V, and tunnel one copy to each VTEP in V's flood list.
    That is ingress replication.
+
+Fewer than 14 octets is dropped, `not_a_frame`; a port in no VNI,
+`unknown_port`.
 
 From the tunnel:
 
@@ -186,7 +193,8 @@ From the tunnel:
 3. Learn the inner source MAC behind the outer source address, unless
    the VNI is in `evpn` mode.
 4. Deliver to the destination's port, or to every port of the VNI.
-   Never back into the tunnel. That is what keeps ingress replication
+   Never back into the tunnel: a destination behind another VTEP is
+   dropped, `split_horizon`. That is what keeps ingress replication
    free of loops.
 
 On the way out:
@@ -197,7 +205,10 @@ On the way out:
   49152 to 65535, so ECMP spreads the flows (RFC 7348 section 5).
 - The UDP checksum is zero (RFC 7348 section 5).
 - It never fragments (RFC 7348 section 4.3). A frame too large is
-  dropped, `too_big`.
+  dropped, `too_big`. The outer IPv4, UDP and VXLAN headers take 36
+  octets of the underlay's MTU; the outer Ethernet header is not in
+  it. So with an MTU of 1500, an inner frame of 1464 octets fits and
+  one of 1465 does not.
 
 ### Its API
 
@@ -281,9 +292,13 @@ routescope's.
    parses it on demand, since a crafted packet's may not parse. The
    round trips run on the kernel's own packets,
    `test/fixtures/kernel-vxlan.pcap`.
-3. `Validation` and `Fault`, with their tests.
-4. The VTEP: the forwarder, the MAC table, the edges, `vtep4rd`,
-   `vtep4r-cli`, the functional tests.
+3. `Validation` and `Fault`, with their tests. Done, #3.
+4. The VTEP, in two pull requests, to keep each small:
+   - 4a, the pure core: `MacTable`, `BridgeDomain`, `Forwarder`,
+     `Switch`, unit tests on bytes with the time as an argument, and
+     two switches wired through each other's tunnel actions.
+   - 4b, the edges: ports, tunnel, ager, `VXLAN::Logging`, `vtep4rd`
+     with its file and API, `vtep4r-cli`, the functional tests.
 5. `Gen` and `vtep4r-sim`.
 6. The image, the lab tier and the fault matrix.
 7. `vtep4r capture`, which dissects VXLAN with the inner frame.

@@ -37,8 +37,10 @@ the rules below. When this file does not say, do what bgp4r does.
 ## Layout
 
 Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
-`validation.rb`, `fault.rb`, the unit tier, `specs/rfc7348.txt` and one
-capture in `test/fixtures/`. The rest is planned.
+`validation.rb`, `fault.rb`, `vtep.rb` and `vtep/` (`actions.rb`,
+`mac_table.rb`, `bridge_domain.rb`, `forwarder.rb`, `switch.rb`), the
+unit tier, `specs/rfc7348.txt` and one capture in `test/fixtures/`.
+The rest is planned.
 
 ```
 vtep4r.rb                entry point, requires everything
@@ -207,8 +209,9 @@ The phases are in `docs/design/vtep4r.md`, "Work".
 | --- | --- |
 | 1. datalink-socket: sent frames | Done, datalink-socket #7 |
 | 2. Skeleton, `Header`, `Packet` | Done, #2 |
-| 3. `Validation` and `Fault` | This pull request |
-| 4. The VTEP, `vtep4rd`, `vtep4r-cli` | Not started |
+| 3. `Validation` and `Fault` | Done, #3 |
+| 4a. The VTEP's pure core | This pull request |
+| 4b. The edges, `vtep4rd`, `vtep4r-cli` | Not started |
 | 5. `Gen` and `vtep4r-sim` | Not started |
 | 6. Image, lab tier, fault matrix | Not started |
 | 7. `vtep4r capture` | Not started |
