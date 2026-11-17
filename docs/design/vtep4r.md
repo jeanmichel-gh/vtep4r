@@ -214,20 +214,25 @@ On the way out:
 ### Its API
 
 JSON lines on a Unix socket, `/run/vtep4r/vtep4rd.sock`, with
-`vtep4r-cli` as its client, as `bgp4rd` and `bgp4r-cli`.
+`vtep4r-cli` as its client, as `bgp4rd` and `bgp4r-cli`. The envelope
+is bgp4rd's exactly (bgp4r `docs/daemon.md`, "The envelope"), so
+routescope reads it with the same one-line client. The socket is born
+0660; a bad line, an over-long line, a method that raises or a client
+that goes away is answered or ignored without taking the daemon down.
+Every method runs on `Vtepd`'s worker thread.
 
-| Method | Answers or does |
-| --- | --- |
-| `api.info` | version, API number, methods: routescope's contract |
-| `show.status` | local address, VNIs, uptime |
-| `show.vnis` | per VNI: ports, mode, flood list, MAC count, ageing |
-| `show.macs` | per VNI: MAC, `local` or `remote`, port or VTEP, origin, age, sequence |
-| `show.counters` | per port and per peer; drops and findings by reason |
-| `vni.add`, `vni.del` | a bridge domain |
-| `vni.flood.add`, `vni.flood.del` | a VTEP in a flood list |
-| `mac.add`, `mac.del`, `mac.flush` | entries, for EVPN |
-| `config.reload` | the file again, as SIGHUP |
-| `events` | a stream: `mac.learned`, `mac.moved`, `mac.aged`, `drop` |
+| Method | Answers or does | Step |
+| --- | --- | --- |
+| `api.info` | version, API number, methods: routescope's contract | 4c |
+| `show.status` | local address, VNIs, MTU, receive policy, uptime | 4c |
+| `show.vnis` | per VNI: `vni`, `type` (`L2`), `vtep_ip`, `ports`, `mode`, `remote_vteps`, `flood` (`HER`), `macs`, `ageing` | 4c |
+| `show.macs` | per MAC, all VNIs or `vni`: `local` or `remote`, port or VTEP, origin, age, sequence, moves | 4c |
+| `show.counters` | per port and per peer; drops and findings by reason | 4c |
+| `vni.flood.add`, `vni.flood.del` | a VTEP in a flood list | 4c |
+| `mac.add`, `mac.del`, `mac.flush` | entries, for EVPN; `mac.add` takes `vni`, `mac`, `vtep`, `seq` | 4c |
+| `vni.add`, `vni.del` | a bridge domain | 4d |
+| `config.reload` | the file again, as SIGHUP | 4d |
+| `events.subscribe`, `events.unsubscribe` | a stream, in bgp4rd's form: `mac.learned`, `mac.moved`, `mac.aged`, `drop` | 4d |
 
 `show.vnis` and `show.macs` give routescope's `evpn_vnis` and
 `evpn_macs` columns. It has no `inject`. That is the sim's.
@@ -304,8 +309,12 @@ routescope's.
      process. Checked live against the kernel's `vxlan` in network
      namespaces, 2026-11-17: pings both ways, two MACs learned, no
      drops.
-   - 4c, the control surface: the API on the Unix socket, its client,
-     `vtep4r-cli`, `exe/vtep4rd`, `exe/vtep4r-cli`.
+   - 4c, the control surface: the API on the Unix socket (the methods
+     marked 4c above), its client, `vtep4r-cli`, `exe/vtep4rd` and
+     `exe/vtep4r-cli`, with functional tests over a real socket and of
+     the two programs run as a person runs them.
+   - 4d, the rest of the API: the event stream, `vni.add` and
+     `vni.del`, and `config.reload` with SIGHUP.
 5. `Gen` and `vtep4r-sim`.
 6. The image, the lab tier and the fault matrix.
 7. `vtep4r capture`, which dissects VXLAN with the inner frame.

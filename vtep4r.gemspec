@@ -10,6 +10,8 @@ Gem::Specification.new do |s|
   s.homepage = 'https://github.com/jeanmichel-gh/vtep4r'
   s.license = 'GPL-3.0-or-later'
   s.require_paths = ['.']
+  s.bindir = 'exe'
+  s.executables = %w[vtep4rd vtep4r-cli]
   s.required_ruby_version = '>= 3.3'
   # logger ships with Ruby, but Ruby 4.0 made it a bundled gem.
   s.add_dependency 'logger'
