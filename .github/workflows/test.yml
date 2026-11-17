@@ -1,0 +1,41 @@
+name: test
+
+# Each commit runs once: a pull request's commits through pull_request,
+# master through push. A newer push to a pull request cancels its older
+# run; master's runs are never cancelled. As bgp4r's.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/master' && github.run_id) || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  ruby:
+    name: ruby ${{ matrix.ruby }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Quote versions: unquoted, YAML reads 4.0 as the number 4.
+        ruby: ['3.3', '3.4', '4.0']
+        experimental: [false]
+        include:
+          - ruby: head
+            experimental: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - name: Unit tests
+        run: bundle exec ruby test/run_unit.rb
+      - name: Unit tests with frozen string literals
+        # Catches code that mutates a string literal before Ruby freezes them.
+        run: bundle exec ruby --enable-frozen-string-literal test/run_unit.rb

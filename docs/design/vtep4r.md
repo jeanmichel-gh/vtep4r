@@ -256,10 +256,15 @@ VTEP that does not exist.
 Each step needs the owner's approval of this document and of
 routescope's.
 
-1. datalink-socket: telling sent frames from received ones.
+1. datalink-socket: telling sent frames from received ones. Done,
+   datalink-socket #7: `CapturedFrame#packet_type` and the Linux
+   backend's `ignore_outgoing: true`.
 2. Here: the skeleton (gemspec, Rakefile, test runner, CI on 3.3, 3.4
    and 4.0, the frozen-string-literal run), `Header`, `Packet` and
-   their round trips.
+   their round trips. `Packet` keeps its inner frame as octets and
+   parses it on demand, since a crafted packet's may not parse. The
+   round trips run on the kernel's own packets,
+   `test/fixtures/kernel-vxlan.pcap`.
 3. `Validation` and `Fault`, with their tests.
 4. The VTEP: the forwarder, the MAC table, the edges, `vtep4rd`,
    `vtep4r-cli`, the functional tests.
