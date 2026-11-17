@@ -75,6 +75,18 @@ module VXLAN
       end
 
       class InUse < StandardError; end
+      class BadPath < StandardError; end
+
+      # sockaddr_un's sun_path is 108 octets with its terminating NUL, so
+      # a path holds 107 (Linux, unix(7)). UNIXServer raises a bare
+      # ArgumentError past that; this says which path and why.
+      MAX_PATH = 107
+
+      def self.check_path(path)
+        return path if path.bytesize <= MAX_PATH
+
+        raise BadPath, "the socket path #{path} is #{path.bytesize} octets; a Unix socket path holds #{MAX_PATH}"
+      end
 
       attr_reader :path
 
@@ -89,6 +101,7 @@ module VXLAN
       end
 
       def start
+        Api.check_path(@path)
         FileUtils.mkdir_p(File.dirname(@path))
         if File.socket?(@path)
           raise InUse, "another vtep4rd answers on #{@path}" if live?

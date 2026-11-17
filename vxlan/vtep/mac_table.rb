@@ -96,7 +96,7 @@ module VXLAN
         @entries.values.map do |e|
           { mac: e.mac.to_s, type: e.location.port? ? :local : :remote,
             port: (e.location.name if e.location.port?), vtep: (e.location.name if e.location.vtep?),
-            origin: e.origin, age: (now - e.seen if e.seen), seq: e.seq, moves: e.moves }
+            origin: e.origin, age: ((now - e.seen).round(1) if e.seen), seq: e.seq, moves: e.moves }
         end
       end
     end

@@ -70,4 +70,17 @@ class Programs_Test < Test::Unit::TestCase
     refute File.exist?(@sock)
     assert_match(/vtep4rd answers on .*v.sock/, File.read(@log))
   end
+
+  # A Unix socket path holds 108 octets. A longer one is said in one
+  # line, not a backtrace, and vtep4rd exits 1. Found by running it in a
+  # deep scratch directory.
+  def test_a_socket_path_too_long_is_said_plainly
+    long = File.join(@dir, 'x' * 120, 'v.sock')
+    file = File.join(@dir, 'long.yml')
+    File.write(file, "local: 127.0.0.34\nsocket: #{long}\n")
+    out = IO.popen([RbConfig.ruby, File.join(ROOT, 'exe/vtep4rd'), '-f', file, '--log', File.join(@dir, 'l2')],
+                   err: %i[child out], &:read)
+    assert_equal 1, $?.exitstatus
+    assert_match(/\Avtep4rd: the socket path .* is 1\d\d octets; a Unix socket path holds 107\n\z/, out)
+  end
 end

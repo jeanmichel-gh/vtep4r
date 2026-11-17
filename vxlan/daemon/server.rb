@@ -59,10 +59,11 @@ module VXLAN
         return usage(1) if opts[:error] || opts[:file].nil?
 
         config = Config.load(opts[:file])
+        # Everything that can be checked before a thread starts is.
+        path = Api.check_path(opts[:socket] || config.socket || Client.default_socket(env))
         logger = Logging.to_io(opts[:log] || '-', level: opts[:debug] ? :debug : :info)
         ports, tunnel = edges ? edges.call(config) : [Vtep::Ports.linux(config.ports), Vtep::UdpTunnel.new(config.local)]
         vtepd = Vtepd.new(config, ports: ports, tunnel: tunnel, logger: logger).start
-        path = opts[:socket] || config.socket || Client.default_socket(env)
         api = Api.new(vtepd, path: path, logger: logger).start
         logger.call(:info, "vtep4rd answers on #{path}")
         wait_for_signal
@@ -70,7 +71,8 @@ module VXLAN
         api.stop
         vtepd.stop
         0
-      rescue Config::Error, Api::InUse, SystemCallError => e
+      rescue Config::Error, Api::InUse, Api::BadPath, SystemCallError, Datalink::Error => e
+        vtepd&.stop
         @err.puts "vtep4rd: #{e.message}"
         1
       end
