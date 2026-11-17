@@ -22,6 +22,14 @@ pk.header.vni                   #=> 100
 pk.frame                        #=> a Datalink::Frame, or nil
 pk.to_hash                      #=> { header: { vni: 100 }, inner: "ffff..." }
 VXLAN::Packet.new(pk.to_hash).encode == octets   #=> true
+
+# What a received packet got wrong, with the RFC section.
+pk.errors                       #=> [] or [#<Finding name=:no_i_flag ...>]
+VXLAN::Validation.decide(pk, policy: :rfc)       #=> :deliver or :drop
+
+# Crafted packets, and what RFC 7348 expects of a receiver.
+VXLAN::Fault.names              #=> [:no_i_flag, :r_bit_set, ...]
+VXLAN::Fault.wire(:r_bit_set, vni: 100)          # octets to send
 ```
 
 Tests: `ruby test/run_unit.rb` under Bundler, or with `DATALINK_LIB`
