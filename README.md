@@ -54,6 +54,11 @@ VXLAN::Validation.decide(pk, policy: :rfc)       #=> :deliver or :drop
 # Crafted packets, and what RFC 7348 expects of a receiver.
 VXLAN::Fault.names              #=> [:no_i_flag, :r_bit_set, ...]
 VXLAN::Fault.wire(:r_bit_set, vni: 100)          # octets to send
+
+# Generated traffic: a spec in plain JSON types, the same octets every run.
+g = VXLAN::Gen.new('vni' => { 'cycle' => [100, 200] }, 'macs' => 1000)
+g.each { |pk| socket.send(pk.encode, 0, vtep, 4789) }
+g.expected                      #=> [{ vni: 100, src: "02:00:00:00:00:01", dst: "ff:ff:ff:ff:ff:ff" }, ...]
 ```
 
 Tests: `ruby test/run_unit.rb` under Bundler, or with `DATALINK_LIB`

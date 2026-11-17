@@ -37,7 +37,7 @@ the rules below. When this file does not say, do what bgp4r does.
 ## Layout
 
 Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
-`validation.rb`, `fault.rb`, `vtep.rb` and `vtep/` (`actions.rb`,
+`validation.rb`, `fault.rb`, `gen.rb` and `gen/vary.rb`, `vtep.rb` and `vtep/` (`actions.rb`,
 `mac_table.rb`, `bridge_domain.rb`, `forwarder.rb`, `switch.rb`,
 `ports.rb`, `tunnel.rb`), `logging.rb`, `daemon/` (`config.rb`,
 `vtepd.rb`, `events.rb`, `api.rb`, `client.rb`, `cli.rb`,
@@ -236,7 +236,8 @@ The phases are in `docs/design/vtep4r.md`, "Work".
 | 4a. The VTEP's pure core | Done, #4 |
 | 4b. The edges and the daemon loop | Done, #5 |
 | 4c. The control API, `vtep4rd`, `vtep4r-cli` | Done, #6 |
-| 4d. Events, `vni.add`/`del`, `config.reload` | This pull request |
-| 5. `Gen` and `vtep4r-sim` | Not started |
+| 4d. Events, `vni.add`/`del`, `config.reload` | Done, #7 |
+| 5a. `VXLAN::Gen` | This pull request |
+| 5b. `vtep4r-sim` | Not started |
 | 6. Image, lab tier, fault matrix | Not started |
 | 7. `vtep4r capture` | Not started |

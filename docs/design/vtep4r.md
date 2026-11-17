@@ -140,19 +140,35 @@ Trial 1 is its first five rows for the kernel.
 
 ### `VXLAN::Gen`
 
-A pure module, as bgp4r's `bgp/gen`: a spec in, frames out, with no
+A pure module, as bgp4r's `bgp/gen`: a spec in, packets out, with no
 socket, thread or clock. A spec is plain JSON types, so it is the same
-as a scenario step, an HTTP body or a Hash in a test.
+as a scenario step, an HTTP body or a Hash in a test. Built in step 5a.
 
 | Key | What |
 | --- | --- |
-| `vni`, `header` | the header, or any `Header` hash |
-| `inner` | `arp`, `broadcast`, `unicast`, or hex |
-| `macs` | N source MACs from `start`, for filling a table |
-| `count`, `per_second` | how many, how fast (the sim paces, not the module) |
+| `vni` | required; a value or an integer pattern |
+| `flags`, `reserved1`, `reserved2` | the header's other fields, values or patterns; any bits, on purpose |
+| `inner` | `broadcast` (the default), `unicast` (needs `dst`) or `arp` |
+| `src`, `macs` | `macs` distinct source MACs counting up from `src`, for filling a table |
+| `count` | how many packets, `macs` by default; past `macs` the sources cycle |
+| `dst`, `ethertype`, `size` | the destination MAC, the EtherType (0x88b5), the inner frame's octets (60; 42 for `arp`, as the kernel sends it) |
+| `sender_ip`, `target_ip` | for `arp`: the sender steps with the source |
 | `seed` | required when a pattern is random |
 
-It answers `packets` and `expected`: what it meant to send, as data.
+Integer patterns are bgp4r's five: `fixed`, `cycle`, `step`, `random`
+and `every`. A value is a function of the packet's number and the seed
+only. `random` is a fresh generator per value per packet, seeded with
+FNV-1a 64 of the seed, the value's name and the number, so the same
+spec gives the same octets on every Ruby; a test pins the values. A
+spec is refused only when it cannot be read: an unknown key, a wrong
+type, a value too wide for its field.
+
+It answers `each` (one packet at a time), `packets` and `expected`:
+`{vni, src, dst}` per packet, what it meant to send, as data. How fast
+to send is the sim's, not the module's.
+
+The design's `header` key became the three field keys, and the `hex`
+inner frame is left out: `vtep4r-sim`'s `send` takes any octets.
 
 ## The VTEP, `vtep4rd`
 
@@ -321,7 +337,11 @@ routescope's.
      events.subscribe` follows a stream. Checked live against the
      kernel's `vxlan`, 2026-11-17: the stream's result and keepalive
      lines, and a reload that changed VNI 100's flood list.
-5. `Gen` and `vtep4r-sim`.
+5. The injector side, in two pull requests:
+   - 5a, `VXLAN::Gen` and its patterns, `Gen::Vary`.
+   - 5b, `vtep4r-sim`: its HTTP API, `send`, `fault`, `generate` with
+     pacing, `stop`, `show.sent`, and routescope's `vxlan:` actions
+     behind it.
 6. The image, the lab tier and the fault matrix.
 7. `vtep4r capture`, which dissects VXLAN with the inner frame.
 
