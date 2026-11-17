@@ -51,3 +51,9 @@ jobs:
       - name: Functional test (the event stream, and a VNI added at run time)
         run: bundle exec ruby -I. test/functional/events_stream_test.rb
         timeout-minutes: 2
+      - name: Functional test (vtep4r-sim over HTTP into a vtep4rd)
+        run: bundle exec ruby -I. test/functional/sim_test.rb
+        timeout-minutes: 2
+      - name: Functional test (vtep4r-sim as a program)
+        run: bundle exec ruby -I. test/functional/sim_program_test.rb
+        timeout-minutes: 2

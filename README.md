@@ -1,8 +1,8 @@
 # vtep4r
 
 VXLAN in Ruby (RFC 7348): a library to build, parse and send VXLAN,
-valid or not, for routing labs and protocol tests. A VTEP, `vtep4rd`,
-is built on it; an injector, `vtep4r-sim`, is next.
+valid or not, for routing labs and protocol tests. Two programs are
+built on it: a VTEP, `vtep4rd`, and an injector, `vtep4r-sim`.
 `docs/design/vtep4r.md` is the plan.
 
 ## vtep4rd
@@ -24,6 +24,20 @@ vnis:
   - vni: 100
     ports: [eth2]
     flood: [10.255.0.12]
+```
+
+## vtep4r-sim
+
+An injector: crafted packets and generated traffic, over HTTP on the
+loopback, as bgp4r-sim. It keeps no MAC table, and it never binds the
+VXLAN port, so it runs beside a vtep4rd.
+
+```sh
+vtep4r-sim -f sim.yml                        # local: 10.255.0.11
+post() { ruby -rnet/http -e 'r = Net::HTTP.post(URI("http://127.0.0.1:8080#{ARGV[0]}"), ARGV[1], "X-VTEP4R" => "routescope"); puts r.body' "$@"; }
+post /api/fault '{"to":"10.255.0.12","case":"r_bit_set","vni":100}'
+post /api/generate '{"to":"10.255.0.12","spec":{"vni":100,"macs":1000},"per_second":500}'
+post /api/stop '{}'
 ```
 
 ## The library

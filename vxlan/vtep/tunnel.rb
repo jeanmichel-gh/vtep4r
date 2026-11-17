@@ -30,25 +30,20 @@ module VXLAN
     # octets], or nil when nothing came within the timeout.
     #
     # RFC 7348 section 5 has the source port vary per flow, and a UDP
-    # socket sends from the one port it is bound to. So UdpTunnel keeps a
-    # small pool of sockets, one per source port in use, and falls back to
-    # the receiving socket when a port cannot be bound.
+    # socket sends from the one port it is bound to. So sending is a
+    # UdpSender: a small pool of sockets, one per source port in use.
     class UdpTunnel
       PORT = 4789   # IANA, RFC 7348 section 8
-      POOL = 64
 
       def initialize(local, port: PORT)
-        @local = local
         @port = port
         @rx = UDPSocket.new
         @rx.bind(local, port)
-        @pool = {}
-        @lock = Mutex.new
+        @tx = UdpSender.new(local, port: port, fallback: @rx)
       end
 
       def send(octets, vtep, source_port)
-        sock = sender(source_port)
-        sock.send(octets, 0, vtep, @port)
+        @tx.send(octets, vtep, source_port)
       end
 
       def recv(timeout)
@@ -59,23 +54,64 @@ module VXLAN
       end
 
       def close
-        @lock.synchronize { @pool.each_value(&:close) }
+        @tx.close
         @rx.close
+      end
+    end
+
+    # The sending half alone, which vtep4r-sim uses: it never binds the
+    # VXLAN port, so it can share a namespace with a vtep4rd that does.
+    #
+    # Each source port gets a socket bound to (local, port), up to POOL of
+    # them, the oldest closed first. A port that cannot be bound, such as
+    # one vtep4rd holds, falls back to +fallback+, or to a socket on an
+    # ephemeral port.
+    class UdpSender
+      POOL = 64
+
+      def initialize(local, port: UdpTunnel::PORT, fallback: nil)
+        @local = local
+        @port = port
+        @fallback = fallback
+        @pool = {}
+        @lock = Mutex.new
+      end
+
+      def send(octets, vtep, source_port)
+        socket(source_port).send(octets, 0, vtep, @port)
+      end
+
+      def close
+        @lock.synchronize do
+          @pool.each_value { |s| s.close unless s.equal?(@fallback) || s.closed? }
+          @spare&.close
+          @pool.clear
+        end
       end
 
       private
 
-      def sender(port)
+      def socket(port)
         @lock.synchronize do
           @pool[port] ||= begin
-            @pool.delete(@pool.keys.first)&.close if @pool.size >= POOL
+            if @pool.size >= POOL
+              old = @pool.delete(@pool.keys.first)
+              old.close unless old.equal?(@fallback) || old.equal?(@spare)
+            end
             s = UDPSocket.new
-            s.bind(@local, port)
-            s
-          rescue SystemCallError
-            @rx
+            begin
+              s.bind(@local, port)
+              s
+            rescue SystemCallError
+              s.close
+              @fallback || spare
+            end
           end
         end
+      end
+
+      def spare
+        @spare ||= UDPSocket.new.tap { |s| s.bind(@local, 0) }
       end
     end
 
