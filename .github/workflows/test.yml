@@ -48,3 +48,6 @@ jobs:
       - name: Functional test (vtep4rd and vtep4r-cli as programs)
         run: bundle exec ruby -I. test/functional/programs_test.rb
         timeout-minutes: 2
+      - name: Functional test (the event stream, and a VNI added at run time)
+        run: bundle exec ruby -I. test/functional/events_stream_test.rb
+        timeout-minutes: 2

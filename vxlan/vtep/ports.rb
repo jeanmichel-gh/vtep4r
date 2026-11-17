@@ -28,35 +28,62 @@ module VXLAN
     # the frames this host sends out of the port (datalink-socket's
     # ignore_outgoing, from routescope's trial 1); without that, a VTEP
     # forwards its own namespace's traffic.
+    #
+    # Ports open and close at run time, for vni.add and vni.del: +opener+
+    # makes the socket for a name. Thread safe: the worker opens and
+    # closes, each port's reader receives.
     class Ports
       def self.linux(names)
-        new(names.to_h { |n| [n, Datalink::Socket.new(n, backend: :linux, ignore_outgoing: true).open] })
+        new(names, opener: ->(n) { Datalink::Socket.new(n, backend: :linux, ignore_outgoing: true).open })
       end
 
-      # Each name on its own loopback wire, for tests: wires is name =>
-      # Datalink::Backends::Loopback::Wire.
-      def self.loopback(wires)
+      # For tests: +wires+ is name => Datalink::Backends::Loopback::Wire,
+      # and +names+ the ones open at start (all of them by default).
+      def self.loopback(wires, names = wires.keys)
         require 'datalink/backends/loopback'
-        new(wires.to_h { |n, w| [n, Datalink::Socket.new(n, backend: :loopback, wire: w).open] })
+        new(names, opener: ->(n) { Datalink::Socket.new(n, backend: :loopback, wire: wires.fetch(n)).open })
       end
 
-      attr_reader :sockets
-
-      def initialize(sockets)
-        @sockets = sockets
+      def initialize(names = [], opener: nil, sockets: nil)
+        @opener = opener
+        @lock = Mutex.new
+        @sockets = sockets || {}
+        names.each { |n| open(n) }
       end
 
       def names
-        @sockets.keys
+        @lock.synchronize { @sockets.keys }
+      end
+
+      def open?(name)
+        @lock.synchronize { @sockets.key?(name) }
+      end
+
+      # Opens +name+ unless it is open; true when it opened it.
+      def open(name)
+        @lock.synchronize do
+          return false if @sockets.key?(name)
+          raise ArgumentError, "no way to open port #{name}" unless @opener
+
+          @sockets[name] = @opener.call(name)
+          true
+        end
+      end
+
+      # Closes +name+; its reader sees an IOError or open? false and stops.
+      def close_port(name)
+        s = @lock.synchronize { @sockets.delete(name) }
+        s&.close
+        !s.nil?
       end
 
       def send(name, octets)
-        @sockets.fetch(name).send(octets)
+        socket(name).send(octets)
       end
 
       # The next frame's octets on +name+, or nil after +timeout+.
       def recv(name, timeout)
-        s = @sockets.fetch(name)
+        s = socket(name)
         s.recv_timeout = timeout
         s.recv.bytes.b
       rescue Datalink::TimeoutError
@@ -64,7 +91,13 @@ module VXLAN
       end
 
       def close
-        @sockets.each_value(&:close)
+        @lock.synchronize { @sockets.values.tap { @sockets.clear } }.each(&:close)
+      end
+
+      private
+
+      def socket(name)
+        @lock.synchronize { @sockets[name] } or raise IOError, "port #{name} is not open"
       end
     end
   end

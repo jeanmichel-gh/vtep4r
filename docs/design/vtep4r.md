@@ -230,9 +230,12 @@ Every method runs on `Vtepd`'s worker thread.
 | `show.counters` | per port and per peer; drops and findings by reason | 4c |
 | `vni.flood.add`, `vni.flood.del` | a VTEP in a flood list | 4c |
 | `mac.add`, `mac.del`, `mac.flush` | entries, for EVPN; `mac.add` takes `vni`, `mac`, `vtep`, `seq` | 4c |
-| `vni.add`, `vni.del` | a bridge domain | 4d |
-| `config.reload` | the file again, as SIGHUP | 4d |
-| `events.subscribe`, `events.unsubscribe` | a stream, in bgp4rd's form: `mac.learned`, `mac.moved`, `mac.aged`, `drop` | 4d |
+| `vni.add`, `vni.del` | a bridge domain, with a vnis entry's keys; its ports are opened or closed, and their readers started or stopped | 4d |
+| `config.reload` | the file again, as SIGHUP. VNIs are added, removed, or replaced when their ports or mode changed (losing their MACs); a learn-mode VNI's flood list and any VNI's ageing are set in place. `local`, `mtu`, `receive_policy` and `socket` need a restart, and the answer names them rather than applying them | 4d |
+| `events.subscribe`, `events.unsubscribe` | a stream, in bgp4rd's form and envelope: kinds `mac` (learned, moved, aged), `drop` (a reason, and the peer or port), `config` and `overflow`; `since` replays a backlog of 2000, with an overflow event for what is no longer kept; a keepalive line every 15 s of quiet | 4d |
+
+`show.status` also lists the ports open, so a `vni.del` that left one
+open shows.
 
 `show.vnis` and `show.macs` give routescope's `evpn_vnis` and
 `evpn_macs` columns. It has no `inject`. That is the sim's.
@@ -314,7 +317,10 @@ routescope's.
      `exe/vtep4r-cli`, with functional tests over a real socket and of
      the two programs run as a person runs them.
    - 4d, the rest of the API: the event stream, `vni.add` and
-     `vni.del`, and `config.reload` with SIGHUP.
+     `vni.del`, and `config.reload` with SIGHUP. `vtep4r-cli
+     events.subscribe` follows a stream. Checked live against the
+     kernel's `vxlan`, 2026-11-17: the stream's result and keepalive
+     lines, and a reload that changed VNI 100's flood list.
 5. `Gen` and `vtep4r-sim`.
 6. The image, the lab tier and the fault matrix.
 7. `vtep4r capture`, which dissects VXLAN with the inner frame.

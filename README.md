@@ -13,6 +13,9 @@ vtep4r-cli show.vnis                         # each VNI, its ports and flood lis
 vtep4r-cli show.macs vni=100                 # a VNI's MAC table
 vtep4r-cli show.counters                     # frames per port and peer, drops
 vtep4r-cli mac.add vni=100 mac=02:00:00:00:01:09 vtep=10.255.0.13
+vtep4r-cli vni.add vni=200 ports='["eth3"]'  # a VNI at run time
+vtep4r-cli config.reload                     # the file again; SIGHUP does the same
+vtep4r-cli events.subscribe kinds=mac        # MACs learned, moved and aged, as they happen
 ```
 
 ```yaml

@@ -75,6 +75,19 @@ module VXLAN
         self
       end
 
+      # A bridge domain added at run time, for vtep4rd's vni.add. The same
+      # checks as at start: a VNI once, a port in one VNI.
+      def add_vni(**args)
+        add_bridge(BridgeDomain.new(**args))
+      end
+
+      # The bridge domain removed, with its MAC table; nil if none.
+      def del_vni(vni)
+        bd = @bridges.delete(vni) or return nil
+        bd.ports.each { |p| @by_port.delete(p) }
+        bd
+      end
+
       private
 
       def add_bridge(bd)

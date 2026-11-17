@@ -83,4 +83,26 @@ class Programs_Test < Test::Unit::TestCase
     assert_equal 1, $?.exitstatus
     assert_match(/\Avtep4rd: the socket path .* is 1\d\d octets; a Unix socket path holds 107\n\z/, out)
   end
+
+  # SIGHUP reads the file again, as config.reload. A broken file is
+  # logged and the running configuration kept.
+  def test_sighup_reloads
+    assert File.socket?(@sock), "vtep4rd did not start: #{File.read(@log)}"
+    File.write(@file, "local: 127.0.0.31\nsocket: #{@sock}\nvnis:\n  - vni: 100\n    ports: []\n    flood: [127.0.0.32, 127.0.0.35]\n")
+    Process.kill('HUP', @pid)
+    out = ''
+    30.times do
+      out = cli('show.vnis')
+      break if out.include?('127.0.0.35')
+
+      sleep 0.1
+    end
+    assert_match(/"remote_vteps":\["127.0.0.32","127.0.0.35"\]/, out)
+
+    File.write(@file, "local: [\n")
+    Process.kill('HUP', @pid)
+    30.times { File.read(@log).include?('kept the running configuration') ? break : sleep(0.1) }
+    assert_match(/SIGHUP: .*vtep4rd.yml: .*kept the running configuration/, File.read(@log))
+    assert_match(/127.0.0.35/, cli('show.vnis'))
+  end
 end

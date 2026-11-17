@@ -95,4 +95,27 @@ class Cli_Test < Test::Unit::TestCase
     assert_equal 0, run_cli(%w[-h])[0]
     assert_equal "#{VXLAN::VERSION}\n", run_cli(%w[-v])[1]
   end
+
+  def test_a_value_in_json
+    assert_equal({ 'ports' => %w[eth3], 'vni' => 200 }, CLI.params(['ports=["eth3"]', 'vni=200']))
+  end
+
+  class FakeStream < FakeClient
+    def stream(method, params)
+      @calls << [method, params]
+      yield({ 'id' => 1, 'result' => { 'seq' => 4 } })
+      yield({ 'event' => { 'kind' => 'mac' } })
+      yield({ 'id' => 2, 'error' => 'show.vnis refused' })
+    end
+
+    def unsubscribe; end
+  end
+
+  def test_events_subscribe_prints_each_line_and_stops_on_an_error
+    status, out, err, client = run_cli(%w[events.subscribe kinds=mac], FakeStream.new)
+    assert_equal [['events.subscribe', { 'kinds' => 'mac' }]], client.calls
+    assert_equal %({"id":1,"result":{"seq":4}}\n{"event":{"kind":"mac"}}\n), out
+    assert_equal 1, status
+    assert_match(/show.vnis refused/, err)
+  end
 end

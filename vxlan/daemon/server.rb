@@ -64,9 +64,9 @@ module VXLAN
         logger = Logging.to_io(opts[:log] || '-', level: opts[:debug] ? :debug : :info)
         ports, tunnel = edges ? edges.call(config) : [Vtep::Ports.linux(config.ports), Vtep::UdpTunnel.new(config.local)]
         vtepd = Vtepd.new(config, ports: ports, tunnel: tunnel, logger: logger).start
-        api = Api.new(vtepd, path: path, logger: logger).start
+        api = Api.new(vtepd, path: path, logger: logger, config_path: opts[:file]).start
         logger.call(:info, "vtep4rd answers on #{path}")
-        wait_for_signal
+        wait_for_signals { reload(vtepd, opts[:file], logger) }
         logger.call(:info, 'vtep4rd stopping')
         api.stop
         vtepd.stop
@@ -79,10 +79,30 @@ module VXLAN
 
       private
 
-      def wait_for_signal
+      # Until INT or TERM. HUP runs the block, as config.reload does. A
+      # trap handler only writes to a pipe: the work happens here, on the
+      # main thread, where it may take locks.
+      def wait_for_signals
         r, w = IO.pipe
-        %w[INT TERM].each { |s| Signal.trap(s) { w.write_nonblock('x') rescue nil } }
-        r.read(1)
+        { 'INT' => 'x', 'TERM' => 'x', 'HUP' => 'h' }.each do |sig, c|
+          Signal.trap(sig) do
+            w.write_nonblock(c)
+          rescue IOError, SystemCallError
+            nil
+          end
+        end
+        while (c = r.read(1))
+          return if c == 'x'
+
+          yield
+        end
+      end
+
+      def reload(vtepd, file, logger)
+        report = vtepd.reload(Config.load(file))
+        logger.call(:info, "SIGHUP: #{Vtepd.describe(report)}")
+      rescue Config::Error, ArgumentError => e
+        logger.call(:error, "SIGHUP: #{file}: #{e.message}; kept the running configuration")
       end
 
       def usage(status)

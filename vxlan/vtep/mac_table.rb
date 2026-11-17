@@ -34,7 +34,9 @@ module VXLAN
     class MacTable
       Entry = Struct.new(:mac, :location, :origin, :seen, :seq, :moves)
 
-      attr_reader :ageing
+      # Settable, for a reload; learned entries age by the new value from
+      # the next tick.
+      attr_accessor :ageing
 
       def initialize(ageing: 300)
         @ageing = ageing

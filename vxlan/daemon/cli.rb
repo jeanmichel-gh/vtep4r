@@ -38,6 +38,9 @@ module VXLAN
           vtep4r-cli vni.flood.add vni=100 vtep=10.255.0.13
           vtep4r-cli mac.add vni=100 mac=02:00:00:00:01:09 vtep=10.255.0.13 seq=1
           vtep4r-cli mac.flush '{"vni":100,"origin":"learned"}'
+          vtep4r-cli vni.add vni=200 ports='["eth3"]'   (a list as JSON)
+          vtep4r-cli config.reload                 the file again, as SIGHUP
+          vtep4r-cli events.subscribe kinds=mac    a stream, one line per event
 
         Options:
           -s, --socket PATH   vtep4rd's socket (default: $VTEP4R_SOCKET, else
@@ -64,6 +67,8 @@ module VXLAN
 
         params = CLI.params(opts[:args])
         client = @client || Client.new(opts[:socket], env)
+        return subscribe(client, params) if opts[:method] == 'events.subscribe'
+
         result = client.call(opts[:method], params)
         @out.puts(opts[:pretty] ? JSON.pretty_generate(result) : JSON.generate(result))
         0
@@ -74,7 +79,8 @@ module VXLAN
         client&.close
       end
 
-      # A JSON object, or KEY=VALUE words; a value of digits is a number.
+      # A JSON object, or KEY=VALUE words. A value of digits is a number,
+      # and one that starts with [ or { is JSON, so a list can be given.
       def self.params(words)
         return {} if words.empty?
 
@@ -88,11 +94,28 @@ module VXLAN
           k, v = w.split('=', 2)
           raise ArgumentError, "#{w.inspect} is not KEY=VALUE" if v.nil? || k.empty?
 
-          [k, v.match?(/\A\d+\z/) ? Integer(v) : v]
+          value = if v.match?(/\A\d+\z/) then Integer(v)
+                  elsif v.start_with?('[', '{') then JSON.parse(v)
+                  else v
+                  end
+          [k, value]
         end
       end
 
       private
+
+      # One line per event or keepalive, until interrupted.
+      def subscribe(client, params)
+        client.stream('events.subscribe', params) do |line|
+          raise Client::Error, line['error'] if line['error'] && line.key?('id') && !line.key?('result')
+
+          @out.puts(JSON.generate(line))
+        end
+        0
+      rescue Interrupt
+        client.unsubscribe
+        0
+      end
 
       def help(status)
         (status.zero? ? @out : @err).print USAGE
