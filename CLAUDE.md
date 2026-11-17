@@ -38,9 +38,10 @@ the rules below. When this file does not say, do what bgp4r does.
 
 Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
 `validation.rb`, `fault.rb`, `vtep.rb` and `vtep/` (`actions.rb`,
-`mac_table.rb`, `bridge_domain.rb`, `forwarder.rb`, `switch.rb`), the
-unit tier, `specs/rfc7348.txt` and one capture in `test/fixtures/`.
-The rest is planned.
+`mac_table.rb`, `bridge_domain.rb`, `forwarder.rb`, `switch.rb`,
+`ports.rb`, `tunnel.rb`), `logging.rb`, `daemon/` (`config.rb`,
+`vtepd.rb`), the unit tier, one functional test, `specs/rfc7348.txt`
+and one capture in `test/fixtures/`. The rest is planned.
 
 ```
 vtep4r.rb                entry point, requires everything
@@ -168,10 +169,20 @@ DATALINK_LIB=~/datalink-socket/lib ruby -I. -I$DATALINK_LIB test/unit/header_tes
 Check the test count against `grep -c 'def test_'`: a test defined twice
 in one class, or after `private`, never runs and nothing says so.
 
-Planned: the functional tier runs whole programs in one process with
-datalink-socket's loopback backend. The lab tier needs root and the
-kernel's `vxlan`, or FRR. `docs/running-tests.md` will be generated from
-the test list, as bgp4r's is.
+The functional tier runs whole programs, threads and all, in one
+process: hosts on datalink-socket's loopback wires and VTEPs on an
+in-memory tunnel. No root. CI runs each file:
+
+```sh
+DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/two_vteps_test.rb
+```
+
+A test that starts threads is run many times before it is trusted:
+`two_vteps_test.rb` passed 20 of 20 when it was written.
+
+Planned: the lab tier needs root and the kernel's `vxlan`, or FRR.
+`docs/running-tests.md` will be generated from the test list, as
+bgp4r's is.
 
 ## Rules for agents
 
@@ -210,8 +221,9 @@ The phases are in `docs/design/vtep4r.md`, "Work".
 | 1. datalink-socket: sent frames | Done, datalink-socket #7 |
 | 2. Skeleton, `Header`, `Packet` | Done, #2 |
 | 3. `Validation` and `Fault` | Done, #3 |
-| 4a. The VTEP's pure core | This pull request |
-| 4b. The edges, `vtep4rd`, `vtep4r-cli` | Not started |
+| 4a. The VTEP's pure core | Done, #4 |
+| 4b. The edges and the daemon loop | This pull request |
+| 4c. The control API, `vtep4rd`, `vtep4r-cli` | Not started |
 | 5. `Gen` and `vtep4r-sim` | Not started |
 | 6. Image, lab tier, fault matrix | Not started |
 | 7. `vtep4r capture` | Not started |

@@ -39,3 +39,6 @@ jobs:
       - name: Unit tests with frozen string literals
         # Catches code that mutates a string literal before Ruby freezes them.
         run: bundle exec ruby --enable-frozen-string-literal test/run_unit.rb
+      - name: Functional test (two vtep4rd in one process)
+        run: bundle exec ruby -I. test/functional/two_vteps_test.rb
+        timeout-minutes: 2
