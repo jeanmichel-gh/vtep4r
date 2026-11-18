@@ -184,10 +184,25 @@ module VXLAN
       # A port closed under its reader (vni.del) ends the loop: Linux
       # raises IOError, the loopback backend Datalink::Error. Only an error
       # on a port that should still be open is logged.
+      #
+      # An interface that goes down answers ENETDOWN once to a packet
+      # socket, and the socket works again when it comes back up. So a
+      # system error on an open port is logged once, and the reader waits
+      # and reads again.
       def read_port(name)
+        failing = false
         while @running && @ports.open?(name)
-          octets = @ports.recv(name, POLL)
-          @queue.push([:port, name, octets]) if octets
+          begin
+            octets = @ports.recv(name, POLL)
+            failing = false
+            @queue.push([:port, name, octets]) if octets
+          rescue SystemCallError => e
+            raise unless @running && @ports.open?(name)
+
+            log(:warn, "port #{name}: #{e.message}; reading again") unless failing
+            failing = true
+            sleep POLL
+          end
         end
       rescue IOError, SystemCallError, Datalink::Error => e
         log(:error, "port #{name}: #{e.message}") if @running && @ports.open?(name)
