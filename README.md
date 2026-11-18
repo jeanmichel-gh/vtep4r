@@ -76,6 +76,11 @@ g.expected                      #=> [{ vni: 100, src: "02:00:00:00:00:01", dst: 
 ```
 
 Tests: `ruby test/run_unit.rb` under Bundler, or with `DATALINK_LIB`
-set to a datalink-socket checkout's `lib/`. CLAUDE.md has the details.
+set to a datalink-socket checkout's `lib/`. The lab tier,
+`test/lab/kernel_test.rb`, runs the programs against the kernel's
+VXLAN and needs root. CLAUDE.md has the details.
+
+The image: `docker build -t vtep4r:latest --build-context
+datalink-socket=../datalink-socket .`
 
 GPL 3 or later, for now. See LICENSE.txt.

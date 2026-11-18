@@ -43,8 +43,9 @@ Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
 `vtepd.rb`, `events.rb`, `api.rb`, `client.rb`, `cli.rb`,
 `server.rb`), `sim/` (`config.rb`, `injector.rb`, `http.rb`,
 `server.rb`), `exe/vtep4rd`, `exe/vtep4r-cli` and `exe/vtep4r-sim`, the
-unit tier, six functional tests, `specs/rfc7348.txt` and one capture
-in `test/fixtures/`. The rest is planned.
+unit tier, six functional tests, the lab tier's `test/lab/kernel_test.rb`,
+the `Dockerfile`, `specs/rfc7348.txt` and one capture in
+`test/fixtures/`. The rest is planned.
 
 ```
 vtep4r.rb                entry point, requires everything
@@ -197,9 +198,32 @@ files together 10 of 10 when the last was added. A test that waits for
 something a thread sends waits with a deadline, so a regression fails
 it rather than hanging it.
 
-Planned: the lab tier needs root and the kernel's `vxlan`, or FRR.
-`docs/running-tests.md` will be generated from the test list, as
-bgp4r's is.
+The lab tier runs the real programs against the kernel's own VXLAN in
+three network namespaces, so it needs root and `ip netns`. Without
+them it omits itself, as bgp4r's `fwd_lab_netns_test.rb`; with
+`VTEP4R_LAB_REQUIRED=1`, which CI's `lab` job sets, it fails instead,
+so CI cannot pass with nothing tested:
+
+```sh
+sudo DATALINK_LIB=~/datalink-socket/lib ruby -I. test/lab/kernel_test.rb
+```
+
+It cleans up its namespaces, `vt4A`, `vt4B` and `vt4H`, and a run that
+was killed leaves them for the next run to delete first. A new
+namespace has `lo` down; the test brings it up, since vtep4r-sim's API
+binds 127.0.0.1.
+
+The image, as isis4r's, with datalink-socket as a named build context.
+The `test` stage runs the unit tier, so an image that builds is one
+whose library passes:
+
+```sh
+docker build -t vtep4r:latest --build-context datalink-socket=../datalink-socket .
+docker build --target test --build-context datalink-socket=../datalink-socket .
+```
+
+Planned: `docs/running-tests.md` will be generated from the test list,
+as bgp4r's is.
 
 ## Rules for agents
 
@@ -243,6 +267,7 @@ The phases are in `docs/design/vtep4r.md`, "Work".
 | 4c. The control API, `vtep4rd`, `vtep4r-cli` | Done, #6 |
 | 4d. Events, `vni.add`/`del`, `config.reload` | Done, #7 |
 | 5a. `VXLAN::Gen` | Done, #8 |
-| 5b. `vtep4r-sim` | This pull request |
-| 6. Image, lab tier, fault matrix | Not started |
+| 5b. `vtep4r-sim` | Done, #9 |
+| 6a. The image and the lab tier | This pull request |
+| 6b. The fault matrix | Not started |
 | 7. `vtep4r capture` | Not started |
