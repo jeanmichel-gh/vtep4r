@@ -275,21 +275,42 @@ privilege. A container has it.
 
 ## The injector, `vtep4r-sim`
 
-An HTTP API on the loopback, as `bgp4r-sim`'s, so `docker exec` reaches
-it with one Ruby line.
+An HTTP API on the loopback, as `bgp4r-sim`'s (bgp4r `docs/daemon.md`,
+"The HTTP API"), so `docker exec` reaches it with one Ruby line and
+routescope's driver is a copy of its `Bgp4rSim`. Built in step 5b.
 
-| Action | Does |
-| --- | --- |
-| `send` | one packet: a `Header` hash and an inner frame, to a VTEP |
-| `fault` | one catalog entry, by name, to a VTEP |
-| `generate` | a `VXLAN::Gen` spec, paced |
-| `stop` | the running generation |
-| `show.sent` | what it sent, by action, with `expected` |
+- `127.0.0.1:8080` by default. GET for reads, POST for actions.
+- A POST carries `X-VTEP4R: routescope`, matched case insensitively,
+  since `Net::HTTP` sends it as `X-Vtep4r`; without it, 403.
+- 400 for a request the caller can fix, 409 for a generation already
+  running, each with `{"error": "..."}`.
+- No web framework and no `webrick`: HTTP/1.1 over `TCPServer`.
 
-It keeps no MAC table and forwards nothing. Its file refuses the
-`vnis`, `ports` and `ageing` keys by name, as `bgp4r-sim` refuses a
-Loc-RIB's. It sends from the address it is told, so it can pose as a
-VTEP that does not exist.
+| Path | Body keys | Does |
+| --- | --- | --- |
+| `POST /api/send` | `to`, `vni`, `flags`, `reserved1`, `reserved2`, `inner` (hex), `source_port` | one packet, any header, any inner octets (the kernel's ARP by default) |
+| `POST /api/fault` | `to`, `case`, `vni`, `inner`, `source_port` | one catalog entry; answers what RFC 7348 expects of the receiver |
+| `POST /api/generate` | `to`, `spec`, `per_second`, `source_port` | a `VXLAN::Gen` spec in a thread, paced from its start; one at a time |
+| `POST /api/stop` | | ends the running generation; it wakes the pacing wait, so a slow rate does not hold it |
+| `POST /api/plan` | `spec`, `offset`, `limit` | a dry run: `Gen#expected`, paged, nothing sent |
+| `GET /api/status`, `/api/sent`, `/api/topology`, `/api/events?since=N`, `/` | | what it is, what it sent, what it can send, its events in bgp4r's shape, the paths |
+
+Its file is `local`, `api` and `port`. It keeps no MAC table and
+forwards nothing: the file refuses `vnis`, `ports`, `ageing`, `mtu`,
+`receive_policy` and `socket` by name, as `bgp4r-sim` refuses a
+Loc-RIB's.
+
+It never binds the VXLAN port: it sends from the source port asked
+for, the flow's hash by default, or an ephemeral one when that port is
+taken. So it shares a namespace with a vtep4rd, which holds 4789. It
+sends from `local`, an address the host has; to pose as a VTEP that
+does not exist, the lab gives the namespace that address.
+
+Checked live, 2026-11-17, beside a vtep4rd in one namespace and
+against the kernel's `vxlan` in another: 50 generated MACs at 500 a
+second, all learned by the kernel; 5 with an R bit set (flags 0x0c),
+none learned, so kernel 7.0 drops them, as in routescope's trial 1;
+5 valid after them, all learned.
 
 ## Tests
 
@@ -339,9 +360,10 @@ routescope's.
      lines, and a reload that changed VNI 100's flood list.
 5. The injector side, in two pull requests:
    - 5a, `VXLAN::Gen` and its patterns, `Gen::Vary`.
+   - 5a, done, #8.
    - 5b, `vtep4r-sim`: its HTTP API, `send`, `fault`, `generate` with
-     pacing, `stop`, `show.sent`, and routescope's `vxlan:` actions
-     behind it.
+     pacing, `stop` and `plan`, and the reads. routescope's driver and
+     its `vxlan:` actions are routescope's work, step 3 of its plan.
 6. The image, the lab tier and the fault matrix.
 7. `vtep4r capture`, which dissects VXLAN with the inner frame.
 

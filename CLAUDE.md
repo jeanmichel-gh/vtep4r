@@ -41,9 +41,10 @@ Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
 `mac_table.rb`, `bridge_domain.rb`, `forwarder.rb`, `switch.rb`,
 `ports.rb`, `tunnel.rb`), `logging.rb`, `daemon/` (`config.rb`,
 `vtepd.rb`, `events.rb`, `api.rb`, `client.rb`, `cli.rb`,
-`server.rb`), `exe/vtep4rd` and `exe/vtep4r-cli`, the unit tier, four
-functional tests, `specs/rfc7348.txt` and one capture in
-`test/fixtures/`. The rest is planned.
+`server.rb`), `sim/` (`config.rb`, `injector.rb`, `http.rb`,
+`server.rb`), `exe/vtep4rd`, `exe/vtep4r-cli` and `exe/vtep4r-sim`, the
+unit tier, six functional tests, `specs/rfc7348.txt` and one capture
+in `test/fixtures/`. The rest is planned.
 
 ```
 vtep4r.rb                entry point, requires everything
@@ -180,14 +181,18 @@ DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/two_vteps_test.rb
 DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/api_socket_test.rb
 DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/programs_test.rb
 DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/events_stream_test.rb
+DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/sim_test.rb
+DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/sim_program_test.rb
 ```
 
-`programs_test.rb` runs `exe/vtep4rd` and `exe/vtep4r-cli` as a person
-does, SIGHUP included. A vtep4rd with no ports opens no raw socket, and
-UDP port 4789 on 127.0.0.x needs no root, so it runs anywhere.
+`programs_test.rb` and `sim_program_test.rb` run the programs as a
+person does, SIGHUP included. A vtep4rd with no ports opens no raw
+socket, and UDP port 4789 on 127.0.0.x needs no root, so they run
+anywhere. `sim_test.rb` drives the sim over HTTP with the headers
+routescope's one-line client sends, into a vtep4rd over real UDP.
 
 A test that starts threads is run many times before it is trusted:
-`two_vteps_test.rb` passed 20 of 20 when it was written, and the four
+`two_vteps_test.rb` passed 20 of 20 when it was written, and the six
 files together 10 of 10 when the last was added. A test that waits for
 something a thread sends waits with a deadline, so a regression fails
 it rather than hanging it.
@@ -237,7 +242,7 @@ The phases are in `docs/design/vtep4r.md`, "Work".
 | 4b. The edges and the daemon loop | Done, #5 |
 | 4c. The control API, `vtep4rd`, `vtep4r-cli` | Done, #6 |
 | 4d. Events, `vni.add`/`del`, `config.reload` | Done, #7 |
-| 5a. `VXLAN::Gen` | This pull request |
-| 5b. `vtep4r-sim` | Not started |
+| 5a. `VXLAN::Gen` | Done, #8 |
+| 5b. `vtep4r-sim` | This pull request |
 | 6. Image, lab tier, fault matrix | Not started |
 | 7. `vtep4r capture` | Not started |

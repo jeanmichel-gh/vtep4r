@@ -60,4 +60,25 @@ class Tunnel_Test < Test::Unit::TestCase
   ensure
     t&.close
   end
+
+  # The sender alone never binds the VXLAN port, so it shares a
+  # namespace with a vtep4rd. A source port it cannot bind, one another
+  # socket holds, falls back to an ephemeral one and still sends.
+  def test_udp_sender_shares_the_port_and_falls_back
+    vtepd = UdpTunnel.new('127.0.0.15', port: 47_891)
+    probe = UDPSocket.new
+    probe.bind('127.0.0.16', 47_891)
+    held = UDPSocket.new
+    held.bind('127.0.0.15', 50_100)
+    tx = UdpSender.new('127.0.0.15', port: 47_891)
+    tx.send('a'.b, '127.0.0.16', 50_101)
+    _, addr = probe.recvfrom(10)
+    assert_equal 50_101, addr[1]
+    tx.send('b'.b, '127.0.0.16', 50_100)
+    data, addr = probe.recvfrom(10)
+    assert_equal 'b', data
+    assert_not_equal 50_100, addr[1]
+  ensure
+    [tx, vtepd, probe, held].compact.each(&:close)
+  end
 end

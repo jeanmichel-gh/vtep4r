@@ -48,13 +48,16 @@ module VXLAN
     # too slowly, gets an overflow event saying how many it lost, as
     # bgp4rd's do: a quiet stream and a lossy one must not look alike.
     class Events
+      # vtep4rd's kinds. vtep4r-sim passes its own; overflow is always
+      # among them.
       KINDS = %i[mac drop config overflow].freeze
       BACKLOG = 2000
       MAX_QUEUE = 10_000
 
-      attr_reader :backlog_limit
+      attr_reader :backlog_limit, :kinds
 
-      def initialize(backlog: BACKLOG, max_queue: MAX_QUEUE, clock: -> { Time.now })
+      def initialize(backlog: BACKLOG, max_queue: MAX_QUEUE, clock: -> { Time.now }, kinds: KINDS)
+        @kinds = (kinds.map(&:to_sym) | [:overflow]).freeze
         @backlog_limit = backlog
         @max_queue = max_queue
         @clock = clock
@@ -69,7 +72,7 @@ module VXLAN
       end
 
       def publish(kind, message, level: :info, peer: nil, data: {})
-        raise ArgumentError, "unknown event kind #{kind.inspect}; kinds: #{KINDS.join(', ')}" unless KINDS.include?(kind)
+        raise ArgumentError, "unknown event kind #{kind.inspect}; kinds: #{@kinds.join(', ')}" unless @kinds.include?(kind)
 
         @lock.synchronize do
           ev = Event.new(@seq += 1, @clock.call, level, kind, peer, message, data)
@@ -89,8 +92,8 @@ module VXLAN
       # A Subscription; +since+ replays what is kept after it.
       def subscribe(kinds: nil, since: nil)
         kinds = kinds&.map(&:to_sym)
-        unknown = Array(kinds) - KINDS
-        raise ArgumentError, "unknown event kind #{unknown.join(', ')}; kinds: #{KINDS.join(', ')}" unless unknown.empty?
+        unknown = Array(kinds) - @kinds
+        raise ArgumentError, "unknown event kind #{unknown.join(', ')}; kinds: #{@kinds.join(', ')}" unless unknown.empty?
 
         @lock.synchronize do
           sub = Subscription.new(kinds, @max_queue, @clock)
