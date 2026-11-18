@@ -14,6 +14,22 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
+  # The lab tier: vtep4rd and vtep4r-sim against the kernel's VXLAN in
+  # network namespaces, which needs root. VTEP4R_LAB_REQUIRED makes a run
+  # that could not build them fail rather than omit.
+  lab:
+    name: lab (root, the kernel's vxlan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+      - name: The lab tier, as root
+        run: sudo -E env "PATH=$PATH" VTEP4R_LAB_REQUIRED=1 bundle exec ruby -I. test/lab/kernel_test.rb
+
   ruby:
     name: ruby ${{ matrix.ruby }}
     runs-on: ubuntu-latest

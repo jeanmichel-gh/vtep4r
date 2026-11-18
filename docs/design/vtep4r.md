@@ -364,7 +364,20 @@ routescope's.
    - 5b, `vtep4r-sim`: its HTTP API, `send`, `fault`, `generate` with
      pacing, `stop` and `plan`, and the reads. routescope's driver and
      its `vxlan:` actions are routescope's work, step 3 of its plan.
-6. The image, the lab tier and the fault matrix.
+6. In two pull requests:
+   - 6a, the image and the lab tier. A `Dockerfile` as isis4r's, whose
+     `test` stage runs the unit tier, and `test/lab/kernel_test.rb`:
+     vtep4rd and vtep4r-sim, the real programs, against the kernel's
+     `vxlan` in three namespaces, as root; pings both ways, each side
+     learning the other, a broadcast from the host flooded into the
+     tunnel, and the sim filling the kernel's table. CI runs it as
+     root in a job of its own.
+   - 6b, the fault matrix: every catalog entry sent by vtep4r-sim to
+     vtep4rd and to the kernel, what each did recorded in
+     `docs/fault-matrix.md`, generated. FRR has no VXLAN data plane of
+     its own (zebra programs the kernel's `vxlan` device), so the
+     kernel's row is FRR's too, and the document says so.
+     `oversize_inner` joins the catalog there, where the MTU is known.
 7. `vtep4r capture`, which dissects VXLAN with the inner frame.
 
 ## Open questions
