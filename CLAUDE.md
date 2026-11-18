@@ -43,7 +43,9 @@ Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
 `vtepd.rb`, `events.rb`, `api.rb`, `client.rb`, `cli.rb`,
 `server.rb`), `sim/` (`config.rb`, `injector.rb`, `http.rb`,
 `server.rb`), `exe/vtep4rd`, `exe/vtep4r-cli` and `exe/vtep4r-sim`, the
-unit tier, six functional tests, the lab tier's `test/lab/kernel_test.rb`,
+unit tier, six functional tests, the lab tier (`test/lab/`: `lab_net.rb`,
+`kernel_test.rb`, `fault_matrix.rb` and `fault_matrix_test.rb`), the
+generated `docs/fault-matrix.md`,
 the `Dockerfile`, `specs/rfc7348.txt` and one capture in
 `test/fixtures/`. The rest is planned.
 
@@ -206,7 +208,22 @@ so CI cannot pass with nothing tested:
 
 ```sh
 sudo DATALINK_LIB=~/datalink-socket/lib ruby -I. test/lab/kernel_test.rb
+sudo DATALINK_LIB=~/datalink-socket/lib ruby -I. test/lab/fault_matrix_test.rb
 ```
+
+**`docs/fault-matrix.md` is generated, never edited.** The matrix test
+writes it when `VTEP4R_MATRIX_DOC` names the path:
+
+```sh
+sudo VTEP4R_MATRIX_DOC=docs/fault-matrix.md DATALINK_LIB=~/datalink-socket/lib ruby -I. test/lab/fault_matrix_test.rb
+```
+
+`test/unit/fault_matrix_doc_test.rb`, which needs no root, fails when the
+catalog and the document disagree, so a new fault goes in with the
+matrix run again. **Delivered is judged by a learned MAC**, one source
+MAC per case per receiver, never by counters alone: the host's own
+frames crossing the tunnel made counters read deliveries that were not
+there.
 
 It cleans up its namespaces, `vt4A`, `vt4B` and `vt4H`, and a run that
 was killed leaves them for the next run to delete first. A new
@@ -268,6 +285,6 @@ The phases are in `docs/design/vtep4r.md`, "Work".
 | 4d. Events, `vni.add`/`del`, `config.reload` | Done, #7 |
 | 5a. `VXLAN::Gen` | Done, #8 |
 | 5b. `vtep4r-sim` | Done, #9 |
-| 6a. The image and the lab tier | This pull request |
-| 6b. The fault matrix | Not started |
+| 6a. The image and the lab tier | Done, #10 |
+| 6b. The fault matrix | This pull request |
 | 7. `vtep4r capture` | Not started |

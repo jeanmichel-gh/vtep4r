@@ -132,11 +132,27 @@ its `expect` says, and has a finding.
 
 ### The fault matrix
 
-`test/lab/fault_matrix_test.rb` sends each catalog entry to a receiver
-and records what it did. It also writes `docs/fault-matrix.md`, which
-says what each implementation does: `vtep4rd`, the kernel and FRR. This
-is bgp4r's `docs/protocol-testing.md`, "What three implementations do".
-Trial 1 is its first five rows for the kernel.
+`test/lab/fault_matrix_test.rb` sends each catalog entry, and a valid
+packet as a baseline, by vtep4r-sim to two receivers: vtep4rd and the
+kernel's `vxlan`. It asserts vtep4rd against RFC 7348 and records the
+kernel. It writes `docs/fault-matrix.md` when asked, as bgp4r's
+`docs/protocol-testing.md`, "What three implementations do". Built in
+step 6b.
+
+FRR has no VXLAN data plane of its own: zebra programs the kernel's
+`vxlan` device. So the matrix has two receivers, and the kernel's
+column is FRR's too.
+
+Delivered is judged by a learned MAC: each case sends its inner frame
+from a source MAC of its own, and a receiver learns a source only from
+a packet it accepted. Counters alone read the host's own frames as
+deliveries.
+
+Linux 7.0 on ospflab, 2026-11-18: the kernel drops all four
+reserved-bit cases (`r_bit_set`, `r_bits_all`, `reserved1_set`,
+`reserved2_set`), counting each as an rx error, where RFC 7348 section 5
+says to ignore those bits. vtep4rd ignores them and delivers. Both drop
+the I flag clear, an unknown VNI and the three cut packets.
 
 ### `VXLAN::Gen`
 
@@ -377,7 +393,9 @@ routescope's.
      `docs/fault-matrix.md`, generated. FRR has no VXLAN data plane of
      its own (zebra programs the kernel's `vxlan` device), so the
      kernel's row is FRR's too, and the document says so.
-     `oversize_inner` joins the catalog there, where the MTU is known.
+     `oversize_inner` is still out of the catalog: what a receiver does
+     with it depends on its MTU, and the RFC sets no expectation for a
+     receiver to assert. It waits for a reason to want it.
 7. `vtep4r capture`, which dissects VXLAN with the inner frame.
 
 ## Open questions

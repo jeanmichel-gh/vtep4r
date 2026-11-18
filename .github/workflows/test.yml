@@ -29,6 +29,10 @@ jobs:
           bundler-cache: true
       - name: The lab tier, as root
         run: sudo -E env "PATH=$PATH" VTEP4R_LAB_REQUIRED=1 bundle exec ruby -I. test/lab/kernel_test.rb
+      - name: The fault matrix, as root
+        # vtep4rd is asserted against RFC 7348; the runner's kernel is only
+        # recorded, so a kernel unlike ospflab's does not fail the job.
+        run: sudo -E env "PATH=$PATH" VTEP4R_LAB_REQUIRED=1 bundle exec ruby -I. test/lab/fault_matrix_test.rb
 
   ruby:
     name: ruby ${{ matrix.ruby }}
