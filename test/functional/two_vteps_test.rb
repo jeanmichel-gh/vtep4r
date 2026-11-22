@@ -123,6 +123,36 @@ class Two_vteps_Test < Test::Unit::TestCase
     assert_equal [], macs(@l2)
   end
 
+  # A port whose interface goes down answers ENETDOWN once (Linux
+  # AF_PACKET). The reader logs it and reads again, so frames flow when
+  # the interface is back.
+  def test_a_port_that_went_down_is_read_again
+    @l1.stop
+    @h1.close
+    w1 = Loopback::Wire.new
+    ports = Vtep::Ports.loopback('eth2' => w1)
+    downs = 1
+    real = ports.method(:recv)
+    ports.define_singleton_method(:recv) do |name, timeout|
+      if downs.positive?
+        downs -= 1
+        raise Errno::ENETDOWN, 'recvfrom(2)'
+      end
+      real.call(name, timeout)
+    end
+    logged = []
+    config = Daemon::Config.new('local' => '10.255.0.11', 'ageing' => 300,
+                                'vnis' => [{ 'vni' => 100, 'ports' => ['eth2'], 'flood' => ['10.255.0.12'] }])
+    @l1 = Daemon::Vtepd.new(config, ports: ports, tunnel: Vtep::MemoryTunnel.new('10.255.0.11', @fabric),
+                                    logger: ->(level, msg) { logged << [level, msg] }, age_every: nil).start
+    @h1 = Datalink::Socket.new('h1', backend: :loopback, wire: w1, recv_timeout: 2).open
+    sleep Daemon::Vtepd::POLL * 2
+    hello = frame('ffffffffffff', H1)
+    @h1.send(hello)
+    assert_equal hello, recv_frame(@h2, hello)
+    assert_equal 1, logged.count { |_, m| m.include?('port eth2: Network is down') }
+  end
+
   def test_on_worker_raises_what_the_block_raised
     assert_raise(KeyError) { @l1.on_worker { {}.fetch(:x) } }
     assert_equal 100, @l1.on_worker { |sw| sw.bridge(100).vni }

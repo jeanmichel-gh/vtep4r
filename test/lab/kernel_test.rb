@@ -61,6 +61,17 @@ class Kernel_Test < Test::Unit::TestCase
     assert_equal({}, cli('show.counters')['drops'])
   end
 
+  # The host port's link down and up: Linux answers ENETDOWN to the
+  # packet socket's reader, which must keep reading. Before the fix
+  # vtep4rd's reader ended, and the host stayed cut off.
+  def test_the_port_is_read_again_after_its_link_goes_down_and_up
+    in_ns('vt4B', 'ip', 'link', 'set', 'p0', 'down')
+    sleep 0.5
+    in_ns('vt4B', 'ip', 'link', 'set', 'p0', 'up')
+    wait_for { in_ns('vt4H', 'ip', 'link', 'show', 'p1').include?('LOWER_UP') }
+    assert_match(/2 received/, in_ns('vt4H', 'ping', '-c', '2', '-W', '2', '172.16.100.1'))
+  end
+
   # vtep4r-sim, beside vtep4rd in its namespace, into the kernel: the
   # generated MACs are learned behind the sim's address.
   def test_the_sim_fills_the_kernels_table
