@@ -268,14 +268,17 @@ module VXLAN
       end
 
       # Learned, moved and aged MACs, logged and published as they happen.
+      # port or peer is where the MAC is (where it was, for aged);
+      # from_port or from_vtep where a moved MAC was before.
       def report_events
         @switch.events.each do |e|
-          where = e.location ? " at #{e.location}" : ''
-          log(:info, "mac #{e.type} vni #{e.vni} #{e.mac}#{where}")
           loc = e.location
-          @events.publish(:mac, "mac #{e.type} vni #{e.vni} #{e.mac}#{where}",
-                          peer: (loc.name if loc&.vtep?),
-                          data: { type: e.type.to_s, vni: e.vni, mac: e.mac.to_s, port: (loc.name if loc&.port?) }.compact)
+          from = e.from
+          text = "mac #{e.type} vni #{e.vni} #{e.mac}#{" at #{loc}" if loc}#{" from #{from}" if from}"
+          log(:info, text)
+          @events.publish(:mac, text, peer: (loc.name if loc&.vtep?),
+                                      data: { type: e.type.to_s, vni: e.vni, mac: e.mac.to_s, port: (loc.name if loc&.port?),
+                                              from_port: (from.name if from&.port?), from_vtep: (from.name if from&.vtep?) }.compact)
         end
         @switch.events.clear
       end

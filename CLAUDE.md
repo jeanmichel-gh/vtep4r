@@ -323,5 +323,11 @@ The phases are in `docs/design/vtep4r.md`, "Work".
 | 5a. `VXLAN::Gen` | Done, #8 |
 | 5b. `vtep4r-sim` | Done, #9 |
 | 6a. The image and the lab tier | Done, #10 |
-| 6b. The fault matrix | This pull request |
+| 6b. The fault matrix | Done, #11 |
 | 7. `vtep4r capture` | Not started |
+
+**EVPN with bgp4rd** is bgp4r's `docs/design/evpn.md` (approved
+2026-11-25). Its pull request 0 is here: a MAC heard on a port moves
+there from a VTEP the API set, the `mac` events say where a MAC was,
+and a `flood` list in `evpn` mode is refused (this pull request). The
+rest is in bgp4r: bgp4rd drives `vtep4rd` through its API.

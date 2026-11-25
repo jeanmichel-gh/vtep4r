@@ -209,7 +209,10 @@ From a host port, with a frame on VNI V:
 1. Learn the source MAC on that port, in either mode. In `evpn` mode
    too: bgp4rd advertises local MACs as type 2 routes, so they must be
    learned. (Corrected in step 4a; the approved draft said "unless V is
-   in `evpn` mode".)
+   in `evpn` mode".) A MAC the API put behind a VTEP is learned here
+   too, as a move: the host is on this port now, and bgp4rd decides
+   by RFC 7432 section 15 (bgp4r `docs/design/evpn.md`, its pull
+   request 0).
 2. A known unicast destination: deliver to its port, or tunnel to its
    VTEP. One on the port it came from is dropped, `same_port`.
 3. Otherwise (broadcast, multicast, unknown unicast): deliver to every
@@ -262,9 +265,9 @@ Every method runs on `Vtepd`'s worker thread.
 | `show.counters` | per port and per peer; drops and findings by reason | 4c |
 | `vni.flood.add`, `vni.flood.del` | a VTEP in a flood list | 4c |
 | `mac.add`, `mac.del`, `mac.flush` | entries, for EVPN; `mac.add` takes `vni`, `mac`, `vtep`, `seq` | 4c |
-| `vni.add`, `vni.del` | a bridge domain, with a vnis entry's keys; its ports are opened or closed, and their readers started or stopped | 4d |
+| `vni.add`, `vni.del` | a bridge domain, with a vnis entry's keys; its ports are opened or closed, and their readers started or stopped. A `flood` list in `evpn` mode is refused, here and in the file: there bgp4rd sets the one flood list through the API | 4d |
 | `config.reload` | the file again, as SIGHUP. VNIs are added, removed, or replaced when their ports or mode changed (losing their MACs); a learn-mode VNI's flood list and any VNI's ageing are set in place. `local`, `mtu`, `receive_policy` and `socket` need a restart, and the answer names them rather than applying them | 4d |
-| `events.subscribe`, `events.unsubscribe` | a stream, in bgp4rd's form and envelope: kinds `mac` (learned, moved, aged), `drop` (a reason, and the peer or port), `config` and `overflow`; `since` replays a backlog of 2000, with an overflow event for what is no longer kept; a keepalive line every 15 s of quiet | 4d |
+| `events.subscribe`, `events.unsubscribe` | a stream, in bgp4rd's form and envelope: kinds `mac` (learned, moved, aged, with the port or peer where the MAC is, or was for aged, and `from_port` or `from_vtep` for moved), `drop` (a reason, and the peer or port), `config` and `overflow`; `since` replays a backlog of 2000, with an overflow event for what is no longer kept; a keepalive line every 15 s of quiet | 4d |
 
 `show.status` also lists the ports open, so a `vni.del` that left one
 open shows.
