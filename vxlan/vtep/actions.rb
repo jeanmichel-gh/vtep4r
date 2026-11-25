@@ -60,7 +60,8 @@ module VXLAN
     Drop = Struct.new(:reason)
 
     # A change in a MAC table, for bgp4rd's type 2 routes and routescope:
-    # :learned, :moved or :aged.
-    Event = Struct.new(:type, :vni, :mac, :location)
+    # :learned, :moved or :aged. +location+ is where the MAC is, or was
+    # for :aged; +from+ is where a :moved MAC was before.
+    Event = Struct.new(:type, :vni, :mac, :location, :from)
   end
 end

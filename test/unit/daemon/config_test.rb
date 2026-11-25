@@ -66,6 +66,16 @@ class Config_Test < Test::Unit::TestCase
     assert_match(/port/, e.message)
   end
 
+  # In evpn mode the flood list is bgp4rd's, through the API.
+  def test_a_flood_list_in_evpn_mode_is_refused
+    e = assert_raise(Config::Error) do
+      Config.new('local' => '1.1.1.1', 'vnis' => [{ 'vni' => 100, 'ports' => ['eth2'], 'mode' => 'evpn', 'flood' => ['10.255.0.12'] }])
+    end
+    assert_match(/vni 100: flood is for learn mode/, e.message)
+    v = Config.new('local' => '1.1.1.1', 'vnis' => [{ 'vni' => 100, 'ports' => ['eth2'], 'mode' => 'evpn', 'flood' => [] }]).vnis.first
+    assert_equal [:evpn, []], v.values_at(:mode, :flood)
+  end
+
   def test_local_is_required
     assert_raise(Config::Error) { Config.new('vnis' => []) }
   end

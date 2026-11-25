@@ -144,6 +144,8 @@ class Api_Test < Test::Unit::TestCase
     assert_match(/port eth3 in vni 200 and 300/, call('vni.add', 'vni' => 300, 'ports' => ['eth3'])[:error])
     assert_match(/vni 100 twice/, call('vni.add', 'vni' => 100, 'ports' => [])[:error])
     assert_match(/unknown vni key port/, call('vni.add', 'vni' => 400, 'port' => ['eth9'])[:error])
+    assert_match(/vni 500: flood is for learn mode/,
+                 call('vni.add', 'vni' => 500, 'ports' => ['eth9'], 'mode' => 'evpn', 'flood' => ['10.255.0.13'])[:error])
     assert_equal %w[eth2 eth3], call('show.status')[:result][:ports]
     assert_equal({ vni: 200, macs: 0 }, call('vni.del', 'vni' => 200)[:result])
     assert_equal [[100], ['eth2']], call('show.status')[:result].values_at(:vnis, :ports)

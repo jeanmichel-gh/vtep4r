@@ -187,6 +187,29 @@ class Switch_Test < Test::Unit::TestCase
     assert_equal [[:aged, 100, '02:00:00:00:01:01']], sw.events.map { |e| [e.type, e.vni, e.mac.to_s] }
   end
 
+  # Where a MAC was: an aged one's place, a moved one's old place.
+  def test_events_say_where_the_mac_was
+    sw = switch
+    sw.from_port('eth2', frame(BCAST, H1), 0)
+    sw.from_tunnel('10.255.0.12', packet(BCAST, H1).encode, 1)
+    sw.age(301)
+    assert_equal [[:learned, Location.port('eth2'), nil],
+                  [:moved, Location.vtep('10.255.0.12'), Location.port('eth2')],
+                  [:aged, Location.vtep('10.255.0.12'), nil]],
+                 sw.events.map { |e| [e.type, e.location, e.from] }
+  end
+
+  # In evpn mode, a MAC bgp4rd put behind a VTEP that then speaks on our
+  # port is moved here, and the event says from where.
+  def test_evpn_mode_a_remote_mac_on_our_port_moves_here
+    sw = switch(mode: :evpn, flood: [])
+    sw.bridge(100).macs.add(Datalink::MAC.new(H1), Location.vtep('10.255.0.12'), seq: 1)
+    sw.from_port('eth2', frame(BCAST, H1), 0)
+    assert_equal [[:moved, Location.port('eth2'), Location.vtep('10.255.0.12')]],
+                 sw.events.map { |e| [e.type, e.location, e.from] }
+    assert_equal [[:Deliver, 'eth2']], kinds(sw.from_port('eth3', frame(H1, H2), 1))
+  end
+
   # The UDP source port: a hash of the inner Ethernet header, in 49152 to
   # 65535 (RFC 7348 section 5), the same for every packet of a flow.
   def test_the_source_port

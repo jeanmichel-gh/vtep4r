@@ -70,7 +70,7 @@ module VXLAN
       # Age every MAC table at +now+.
       def age(now)
         @bridges.each_value do |bd|
-          bd.macs.age(now).each { |mac| @events << Event.new(:aged, bd.vni, mac, nil) }
+          bd.macs.expire(now).each { |e| @events << Event.new(:aged, bd.vni, e.mac, e.location) }
         end
         self
       end
@@ -105,8 +105,10 @@ module VXLAN
         actions.each_with_object([]) do |a, out|
           case a
           when Learn
-            type = @bridges[a.vni].macs.learn(a.mac, a.location, now)
-            @events << Event.new(type, a.vni, a.mac, a.location) if type
+            macs = @bridges[a.vni].macs
+            from = macs.lookup(a.mac)&.location
+            type = macs.learn(a.mac, a.location, now)
+            @events << Event.new(type, a.vni, a.mac, a.location, (from if type == :moved)) if type
           when Note then @findings[a.finding] += 1
           when Drop
             @drops[a.reason] += 1

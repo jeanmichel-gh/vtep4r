@@ -29,8 +29,10 @@ module VXLAN
     #
     # An entry is :learned, from traffic, and ages out after +ageing+
     # seconds unseen; or :api, set by vtep4rd's API for EVPN, which stays
-    # until deleted and which learning never overwrites. The time is an
-    # argument, never read from a clock, so a test is the clock.
+    # until deleted. Learning from a tunnel never overwrites an :api
+    # entry. Learning on a port does: the host is here now, and bgp4rd
+    # hears it as a move (RFC 7432 section 15) and decides. The time is
+    # an argument, never read from a clock, so a test is the clock.
     class MacTable
       Entry = Struct.new(:mac, :location, :origin, :seen, :seq, :moves)
 
@@ -44,14 +46,21 @@ module VXLAN
       end
 
       # :learned for a new MAC, :moved for one seen at another location,
-      # nil otherwise.
+      # nil otherwise. A port learn over an :api entry is a :moved, and
+      # the entry is :learned from then on, with seq 0 as every learned
+      # entry has.
       def learn(mac, location, now)
         e = @entries[mac]
         if e.nil?
           @entries[mac] = Entry.new(mac, location, :learned, now, 0, 0)
           return :learned
         end
-        return nil if e.origin == :api
+        if e.origin == :api
+          return nil unless location.port?
+
+          e.origin = :learned
+          e.seq = 0
+        end
 
         e.seen = now
         return nil if e.location == location
@@ -84,8 +93,13 @@ module VXLAN
 
       # The learned MACs unseen for +ageing+ seconds at +now+, removed.
       def age(now)
-        gone = @entries.values.select { |e| e.origin == :learned && now - e.seen >= @ageing }.map(&:mac)
-        gone.each { |m| @entries.delete(m) }
+        expire(now).map(&:mac)
+      end
+
+      # The same, as the entries removed, so each keeps its location.
+      def expire(now)
+        gone = @entries.values.select { |e| e.origin == :learned && now - e.seen >= @ageing }
+        gone.each { |e| @entries.delete(e.mac) }
         gone
       end
 

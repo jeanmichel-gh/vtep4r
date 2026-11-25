@@ -101,6 +101,26 @@ class Events_stream_Test < Test::Unit::TestCase
     s&.close
   end
 
+  # bgp4rd put h1's MAC behind 10.255.0.12, and h1 speaks on eth2: the
+  # stream says it moved here, and from where (bgp4r docs/design/evpn.md).
+  def test_a_mac_from_the_api_heard_on_a_port_is_a_move_with_its_old_place
+    orders = UNIXSocket.new(@path)
+    orders.write(%({"id":1,"method":"mac.add","params":{"vni":100,"mac":"02:00:00:00:01:01","vtep":"10.255.0.12","seq":1}}\n))
+    assert_equal 1, line(orders)['id']
+    s = UNIXSocket.new(@path)
+    s.write(%({"id":2,"method":"events.subscribe","params":{"kinds":["mac"]}}\n))
+    line(s)
+
+    @h1.send(frame('020000000101'))
+    ev = line(s)['event']
+    assert_equal({ 'type' => 'moved', 'vni' => 100, 'mac' => '02:00:00:00:01:01', 'port' => 'eth2',
+                   'from_vtep' => '10.255.0.12' }, ev['data'])
+    assert_match(/mac moved vni 100 02:00:00:00:01:01 at port eth2 from vtep 10.255.0.12/, ev['message'])
+  ensure
+    orders&.close
+    s&.close
+  end
+
   def test_a_quiet_stream_sends_keepalives
     s = UNIXSocket.new(@path)
     s.write(%({"id":1,"method":"events.subscribe","params":{}}\n))

@@ -55,13 +55,32 @@ class Mac_table_Test < Test::Unit::TestCase
     assert_equal 1, @t.lookup(A).moves
   end
 
-  def test_an_api_entry_is_not_overwritten_by_learning
+  def test_an_api_entry_is_not_overwritten_by_learning_from_a_tunnel
     @t.add(A, Location.vtep('10.255.0.12'), seq: 3)
-    assert_nil @t.learn(A, Location.port('eth2'), 10)
+    assert_nil @t.learn(A, Location.vtep('10.255.0.13'), 10)
     e = @t.lookup(A)
     assert_equal Location.vtep('10.255.0.12'), e.location
     assert_equal :api, e.origin
     assert_equal 3, e.seq
+  end
+
+  # The host is on our port now: a move from remote to local, which
+  # bgp4rd turns into a type 2 route with a higher sequence (RFC 7432
+  # section 15). From then on it is learned, and ages.
+  def test_a_port_learn_over_an_api_entry_is_a_move
+    @t.add(A, Location.vtep('10.255.0.12'), seq: 3)
+    assert_equal :moved, @t.learn(A, Location.port('eth2'), 10)
+    e = @t.lookup(A)
+    assert_equal [Location.port('eth2'), :learned, 10, 0, 1], [e.location, e.origin, e.seen, e.seq, e.moves]
+    assert_equal [A], @t.age(310)
+  end
+
+  def test_expire_gives_the_entries_with_their_place
+    @t.learn(A, Location.port('eth2'), 0)
+    @t.learn(B, Location.vtep('10.255.0.12'), 0)
+    assert_equal [[A, Location.port('eth2')], [B, Location.vtep('10.255.0.12')]],
+                 @t.expire(300).map { |e| [e.mac, e.location] }
+    assert_equal 0, @t.size
   end
 
   def test_learned_entries_age_out

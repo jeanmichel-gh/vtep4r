@@ -83,6 +83,11 @@ module VXLAN
 
         v = v.transform_keys(&:to_s)
         refuse(v.keys - VNI, 'vnis key')
+        # In evpn mode bgp4rd keeps the flood list through the API, in the
+        # one list the file's VTEPs would share (bgp4r docs/design/evpn.md).
+        if v['mode'].to_s == 'evpn' && !Array(v['flood']).empty?
+          raise Error, "vni #{v['vni']}: flood is for learn mode; in evpn mode bgp4rd sets the flood list"
+        end
         { vni: Integer(v['vni'] || raise(Error, 'vnis: an entry has no vni')),
           ports: Array(v['ports']).map(&:to_s), mode: (v['mode'] || 'learn').to_sym,
           flood: Array(v['flood']).map(&:to_s), ageing: Integer(v['ageing'] || @ageing) }
