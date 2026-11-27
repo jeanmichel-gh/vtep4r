@@ -113,6 +113,7 @@ module VXLAN
           { mac: e.mac.to_s, type: e.location.port? ? :local : :remote,
             port: (e.location.name if e.location.port?), vtep: (e.location.name if e.location.vtep?),
             origin: e.origin, age: ((now - e.seen).round(1) if e.seen), seq: e.seq, moves: e.moves }
+            .tap { |r| r[:label] = e.location.label if e.location.label }
         end
       end
     end

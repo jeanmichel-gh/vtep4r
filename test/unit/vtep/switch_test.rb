@@ -249,4 +249,43 @@ end
   def test_a_bridge_domain_that_does_not_exist
     assert_nil switch.bridge(5)
   end
+
+  # EVPN over MPLS: our labels, across the VNIs.
+
+  def mpls_switch
+    Switch.new(local: '10.255.0.11', vnis: [
+                 { vni: 100, ports: %w[eth2], mode: :evpn, encap: :mpls, labels: { unicast: 25_000, bum: 25_001 } },
+                 { vni: 200, ports: %w[eth3], mode: :evpn, encap: :mpls }
+               ])
+  end
+
+  def test_the_labels_we_gave
+    sw = mpls_switch
+    assert_equal({ 25_000 => [100, :unicast], 25_001 => [100, :bum] }, sw.labels)
+    assert sw.set_labels(200, unicast: 25_002, bum: 25_003)
+    assert_equal [25_000, 25_001, 25_002, 25_003], sw.labels.keys.sort
+    sw.set_labels(200, unicast: 25_004, bum: 25_003)
+    refute sw.labels.key?(25_002), 'a label given up is no longer ours'
+    sw.del_vni(100)
+    assert_equal [25_003, 25_004], sw.labels.keys.sort
+  end
+
+  def test_a_label_is_one_vnis
+    sw = mpls_switch
+    e = assert_raise(ArgumentError) { sw.set_labels(200, unicast: 25_001, bum: 25_003) }
+    assert_match(/label 25001 is vni 100's/, e.message)
+    assert_raise(ArgumentError) do
+      sw.add_vni(vni: 300, ports: [], mode: :evpn, encap: :mpls, labels: { unicast: 25_009, bum: 25_000 })
+    end
+    assert_nil sw.bridge(300)
+  end
+
+  def test_from_the_core_through_the_switch
+    sw = mpls_switch
+    out = sw.from_core(Mpls::Packet.new([25_001], Mpls::ControlWord.new, frame(BCAST, H2)).encode, 0)
+    assert_equal ['eth2'], out.grep(Deliver).map(&:port)
+    sw.from_core(Mpls::Packet.new([25_009], Mpls::ControlWord.new, frame(BCAST, H2)).encode, 0)
+    assert_equal 1, sw.drops[:unknown_label]
+    assert_empty sw.events, 'nothing learned from the core'
+  end
 end

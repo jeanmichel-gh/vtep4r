@@ -153,7 +153,7 @@ module VXLAN
           was = old[vni]
           if was.nil?
             add_vni(**v) && report[:added] << vni
-          elsif was[:ports] != v[:ports] || was[:mode] != v[:mode]
+          elsif was[:ports] != v[:ports] || was[:mode] != v[:mode] || was[:encap] != v[:encap]
             del_vni(vni)
             add_vni(**v)
             report[:replaced] << vni
@@ -173,7 +173,10 @@ module VXLAN
           bd = sw.bridge(vni)
           ageing = bd.macs.ageing != v[:ageing] && (bd.macs.ageing = v[:ageing])
           flood = bd.learn_remote? && bd.flood_replace(v[:flood])
-          ageing || flood
+          # Labels in the file are set in place; a file with none leaves
+          # what vni.labels set.
+          labels = v[:labels] && sw.set_labels(vni, **v[:labels])
+          ageing || flood || labels
         end
       end
 
@@ -257,6 +260,12 @@ module VXLAN
           when Vtep::Tunnel
             @tunnel.send(a.packet.encode, a.vtep, a.source_port)
             @counters[:peers][a.vtep][:tx] += 1
+          when Vtep::Push
+            # The MPLS edge is not built yet (bgp4r docs/design/evpn-mpls.md,
+            # vtep4r's step 0c): what would go out is a drop of its own.
+            @switch.drops[:no_mpls_edge] += 1
+            @events.publish(:drop, "drop no_mpls_edge to #{a.vtep}", peer: a.vtep,
+                                                                     data: { reason: 'no_mpls_edge', port: port }.compact)
           when Vtep::Drop
             log(:debug, "drop #{a.reason}")
             @events.publish(:drop, "drop #{a.reason}#{peer ? " from #{peer}" : ''}#{port ? " on #{port}" : ''}",

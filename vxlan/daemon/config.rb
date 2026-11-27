@@ -37,11 +37,17 @@ module VXLAN
     #       ports: [eth2]
     #       mode: learn            # or evpn
     #       flood: [10.255.0.12]   # static, for learn mode
+    #     - vni: 200               # EVPN over MPLS: the bridge domain's number
+    #       ports: [eth3]
+    #       mode: evpn
+    #       encap: mpls            # vxlan, the default, or mpls
+    #       labels: { unicast: 25000, bum: 25001 }   # or set later by vni.labels
     class Config
       class Error < StandardError; end
 
       TOP = %w[local socket receive_policy ageing mtu vnis].freeze
-      VNI = %w[vni ports mode flood ageing].freeze
+      VNI = %w[vni ports mode flood ageing encap labels].freeze
+      LABELS = %w[unicast bum].freeze
 
       attr_reader :local, :socket, :receive_policy, :ageing, :mtu, :vnis
 
@@ -90,7 +96,20 @@ module VXLAN
         end
         { vni: Integer(v['vni'] || raise(Error, 'vnis: an entry has no vni')),
           ports: Array(v['ports']).map(&:to_s), mode: (v['mode'] || 'learn').to_sym,
-          flood: Array(v['flood']).map(&:to_s), ageing: Integer(v['ageing'] || @ageing) }
+          flood: Array(v['flood']).map(&:to_s), ageing: Integer(v['ageing'] || @ageing),
+          encap: (v['encap'] || 'vxlan').to_sym, labels: labels(v) }
+      end
+
+      # { unicast:, bum: }, both or neither, or nil.
+      def labels(v)
+        l = v['labels'] or return nil
+        raise Error, "vni #{v['vni']}: labels is a mapping of unicast and bum" unless l.is_a?(Hash)
+
+        l = l.transform_keys(&:to_s)
+        refuse(l.keys - LABELS, 'labels key')
+        raise Error, "vni #{v['vni']}: labels needs both unicast and bum" unless (LABELS - l.keys).empty?
+
+        { unicast: Integer(l['unicast']), bum: Integer(l['bum']) }
       end
 
       def refuse(keys, what)

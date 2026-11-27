@@ -43,7 +43,8 @@ class Config_Test < Test::Unit::TestCase
     assert_equal '10.255.0.11', c.local
     assert_equal :rfc, c.receive_policy
     assert_equal 1500, c.mtu
-    assert_equal [{ vni: 100, ports: ['eth2'], mode: :learn, flood: ['10.255.0.12'], ageing: 300 }], c.vnis
+    assert_equal [{ vni: 100, ports: ['eth2'], mode: :learn, flood: ['10.255.0.12'], ageing: 300, encap: :vxlan,
+                    labels: nil }], c.vnis
     assert_equal ['eth2'], c.ports
   end
 
@@ -86,5 +87,24 @@ class Config_Test < Test::Unit::TestCase
 
   def test_a_bad_number
     assert_raise(Config::Error) { Config.new('local' => '1.1.1.1', 'mtu' => 'big') }
+  end
+
+  # EVPN over MPLS.
+
+  def test_an_mpls_vni
+    c = VXLAN::Daemon::Config.new('local' => '10.255.0.11',
+                                  'vnis' => [{ 'vni' => 200, 'ports' => ['eth3'], 'mode' => 'evpn', 'encap' => 'mpls',
+                                               'labels' => { 'unicast' => 25_000, 'bum' => 25_001 } }])
+    assert_equal [:mpls, { unicast: 25_000, bum: 25_001 }], c.vnis[0].values_at(:encap, :labels)
+    VXLAN::Vtep::Switch.new(**c.switch_args)
+  end
+
+  def test_labels_are_both_or_neither_and_nothing_else
+    base = { 'vni' => 200, 'mode' => 'evpn', 'encap' => 'mpls' }
+    [{ 'unicast' => 25_000 }, { 'unicast' => 25_000, 'bum' => 25_001, 'evi' => 1 }, [25_000, 25_001]].each do |l|
+      assert_raise(VXLAN::Daemon::Config::Error, l.inspect) do
+        VXLAN::Daemon::Config.new('local' => '1.1.1.1', 'vnis' => [base.merge('labels' => l)])
+      end
+    end
   end
 end

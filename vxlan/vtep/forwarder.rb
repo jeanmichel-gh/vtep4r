@@ -23,6 +23,7 @@
 require 'datalink'
 require 'vxlan/packet'
 require 'vxlan/validation'
+require 'vxlan/mpls'
 require 'vxlan/vtep/actions'
 require 'vxlan/vtep/bridge_domain'
 
@@ -58,10 +59,12 @@ module VXLAN
           loc = entry.location
           return acts << Drop.new(:same_port) if loc.port? && loc.name == port
 
-          return acts << (loc.port? ? Deliver.new(loc.name, octets) : tunnel(bd, loc.name, octets, mtu))
+          return acts << Deliver.new(loc.name, octets) if loc.port?
+
+          return acts << (bd.mpls? ? push(loc.name, loc.label, octets) : tunnel(bd, loc.name, octets, mtu))
         end
         (bd.ports - [port]).each { |p| acts << Deliver.new(p, octets) }
-        copies = bd.flood.map { |v| tunnel(bd, v, octets, mtu) }
+        copies = bd.flood.map { |v| bd.mpls? ? push(v, bd.flood_label(v), octets) : tunnel(bd, v, octets, mtu) }
         drops = copies.grep(Drop)
         acts.concat(copies - drops)
         acts << drops.first unless drops.empty?
@@ -100,6 +103,48 @@ module VXLAN
         acts
       end
 
+      # What came from the MPLS core after the Ethernet header, for the
+      # bridge domains +by_label+ (a Hash of our label to [BridgeDomain,
+      # :unicast or :bum]), under a receive policy.
+      #
+      # An explicit null on top is popped and the label beneath it rises
+      # (RFC 4182 section 2). The label left must be one we gave out, or
+      # the packet "MUST be discarded" (RFC 3031 section 3.18), and the
+      # bottom one, since ours are. Under the unicast label a known MAC is
+      # delivered to its port; under the BUM label, or for a MAC not
+      # known here, the frame goes to every port (RFC 7432 section 12.1
+      # for BUM). Nothing is learned: the packet does not say which PE
+      # sent it.
+      def from_core(by_label, octets, policy:)
+        pk = Mpls::Packet.new(octets)
+        findings = Mpls::Validation.check(pk)
+        if Mpls::Validation.decide(pk, policy: policy) == :drop
+          return [Drop.new(findings.find { |f| f.action == :drop }.name)]
+        end
+
+        acts = findings.select { |f| f.action == :ignore }.map { |f| Note.new(f.name) }
+        top = pk.labels.drop_while(&:explicit_null?).first
+        return acts << Drop.new(:no_label) unless top
+
+        bd, kind = by_label[top.label]
+        return acts << Drop.new(:unknown_label) unless bd
+        return acts << Drop.new(:not_bottom) unless top.bottom?
+
+        inner = pk.inner
+        return acts << Drop.new(:not_a_frame) if inner.nil? || inner.bytesize < ETHERNET_HEADER
+
+        dst = Datalink::MAC.from_bytes(inner.byteslice(0, 6))
+        entry = (bd.macs.lookup(dst) if kind == :unicast && !dst.multicast?)
+        if entry
+          # Never back into the core: as from_tunnel, no loops.
+          return acts << Drop.new(:split_horizon) if entry.location.vtep?
+
+          return acts << Deliver.new(entry.location.name, inner)
+        end
+        bd.ports.each { |p| acts << Deliver.new(p, inner) }
+        acts
+      end
+
       # A hash of the inner Ethernet header, so every packet of a flow has
       # the same port and ECMP keeps it on one path. FNV-1a, 32 bits.
       def source_port(octets)
@@ -116,6 +161,14 @@ module VXLAN
         Tunnel.new(vtep, Packet.new(Header.new(bd.vni), octets), source_port(octets))
       end
       private_class_method :tunnel
+
+      # The remote PE's label, the control word (RFC 7432 section 18) and
+      # the frame. The MTU is the edge's to check, since only it knows how
+      # many transport labels go on top.
+      def push(vtep, label, octets)
+        Push.new(vtep, label, Mpls::Packet.new([label], Mpls::ControlWord.new, octets))
+      end
+      private_class_method :push
     end
   end
 end
