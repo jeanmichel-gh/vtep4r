@@ -37,6 +37,19 @@ module VXLAN
         new(names, opener: ->(n) { Datalink::Socket.new(n, backend: :linux, ignore_outgoing: true).open })
       end
 
+      # EtherType 0x8847, MPLS unicast (RFC 3032 section 5).
+      MPLS = 0x8847
+
+      # The MPLS edge's core devices: only frames of EtherType 0x8847 are
+      # read, and the host's own are skipped. The kernel drops what it
+      # has no label route for, and this socket still gets its copy
+      # (bgp4r docs/design/evpn-mpls.md, measured).
+      def self.linux_mpls(names)
+        new(names, opener: lambda { |n|
+          Datalink::Socket.new(n, backend: :linux, protocol: MPLS, ignore_outgoing: true).open
+        })
+      end
+
       # For tests: +wires+ is name => Datalink::Backends::Loopback::Wire,
       # and +names+ the ones open at start (all of them by default).
       def self.loopback(wires, names = wires.keys)

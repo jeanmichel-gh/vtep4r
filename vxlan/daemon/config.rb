@@ -32,6 +32,7 @@ module VXLAN
     #   receive_policy: rfc
     #   ageing: 300
     #   mtu: 1500
+    #   core: [eth1]             # EVPN over MPLS: the devices toward the core
     #   vnis:
     #     - vni: 100
     #       ports: [eth2]
@@ -45,11 +46,11 @@ module VXLAN
     class Config
       class Error < StandardError; end
 
-      TOP = %w[local socket receive_policy ageing mtu vnis].freeze
+      TOP = %w[local socket receive_policy ageing mtu core vnis].freeze
       VNI = %w[vni ports mode flood ageing encap labels].freeze
       LABELS = %w[unicast bum].freeze
 
-      attr_reader :local, :socket, :receive_policy, :ageing, :mtu, :vnis
+      attr_reader :local, :socket, :receive_policy, :ageing, :mtu, :vnis, :core
 
       def self.load(path)
         new(YAML.safe_load(File.read(path), filename: path) || {})
@@ -67,6 +68,7 @@ module VXLAN
         @receive_policy = (h['receive_policy'] || 'rfc').to_sym
         @ageing = Integer(h['ageing'] || 300)
         @mtu = Integer(h['mtu'] || 1500)
+        @core = Array(h['core']).map(&:to_s)
         @vnis = Array(h['vnis']).map { |v| vni(v) }
       rescue ArgumentError, TypeError => e
         raise Error, e.message

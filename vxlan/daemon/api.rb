@@ -80,6 +80,7 @@ module VXLAN
         'vni.del' => ->(a, p) { a.vni_del(p) },
         'vni.labels' => ->(a, p) { a.vni_labels(p) },
         'show.labels' => ->(a, _p) { a.on { |sw, _now| a.label_rows(sw) } },
+        'show.transport' => ->(a, _p) { a.transport },
         'vni.flood.add' => ->(a, p) { a.flood(p, :add) },
         'vni.flood.del' => ->(a, p) { a.flood(p, :del) },
         'mac.add' => ->(a, p) { a.mac_add(p) },
@@ -189,6 +190,7 @@ module VXLAN
         on do |sw, now|
           { version: VXLAN::VERSION, local: sw.local, mtu: sw.mtu, receive_policy: sw.policy,
             vnis: sw.bridges.map(&:vni), ports: @vtepd.port_names, uptime: (now - @started).round(1) }
+            .tap { |r| r[:core] = @vtepd.core_names unless @vtepd.core_names.empty? }
         end
       end
 
@@ -203,6 +205,12 @@ module VXLAN
         return row unless bd.mpls?
 
         row.merge(labels: bd.labels, flood_labels: bd.flood.to_h { |v| [v, bd.flood_label(v)] })
+      end
+
+      # Each remote PE's transport: labels, gateway and its MAC, device and
+      # MTU, or why it cannot be reached; since when it was so.
+      def transport
+        on { |_sw, _now| @vtepd.transport_rows }
       end
 
       # One row per label we gave out.
@@ -232,6 +240,7 @@ module VXLAN
         on do |sw, _now|
           { ports: c[:ports].transform_values(&:dup), peers: c[:peers].transform_values(&:dup),
             drops: sw.drops.dup, findings: sw.findings.dup }
+            .tap { |r| r[:core] = c[:core].transform_values(&:dup) unless c[:core].empty? }
         end
       end
 

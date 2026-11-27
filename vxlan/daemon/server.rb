@@ -48,7 +48,8 @@ module VXLAN
       end
 
       # Runs until a signal; answers the exit status. +edges+ is the seam
-      # a test uses to run without root: ->(config) { [ports, tunnel] }.
+      # a test uses to run without root: ->(config) { [ports, tunnel] },
+      # or [ports, tunnel, core, transport] for the MPLS edge.
       def start(argv, env = ENV, edges: nil)
         opts = parse(argv)
         return usage(0) if opts[:help]
@@ -62,8 +63,8 @@ module VXLAN
         # Everything that can be checked before a thread starts is.
         path = Api.check_path(opts[:socket] || config.socket || Client.default_socket(env))
         logger = Logging.to_io(opts[:log] || '-', level: opts[:debug] ? :debug : :info)
-        ports, tunnel = edges ? edges.call(config) : [Vtep::Ports.linux(config.ports), Vtep::UdpTunnel.new(config.local)]
-        vtepd = Vtepd.new(config, ports: ports, tunnel: tunnel, logger: logger).start
+        ports, tunnel, core, transport = edges ? edges.call(config) : linux_edges(config)
+        vtepd = Vtepd.new(config, ports: ports, tunnel: tunnel, core: core, transport: transport, logger: logger).start
         api = Api.new(vtepd, path: path, logger: logger, config_path: opts[:file]).start
         logger.call(:info, "vtep4rd answers on #{path}")
         wait_for_signals { reload(vtepd, opts[:file], logger) }
@@ -78,6 +79,14 @@ module VXLAN
       end
 
       private
+
+      # The ports and the tunnel, and with a core: list the MPLS edge.
+      def linux_edges(config)
+        edges = [Vtep::Ports.linux(config.ports), Vtep::UdpTunnel.new(config.local)]
+        return edges if config.core.empty?
+
+        edges + [Vtep::Ports.linux_mpls(config.core), Vtep::Transport.new]
+      end
 
       # Until INT or TERM. HUP runs the block, as config.reload does. A
       # trap handler only writes to a pipe: the work happens here, on the
