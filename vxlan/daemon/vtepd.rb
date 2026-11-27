@@ -24,6 +24,8 @@ require 'vxlan/logging'
 require 'vxlan/vtep'
 require 'vxlan/vtep/ports'
 require 'vxlan/vtep/tunnel'
+require 'vxlan/vtep/transport'
+require 'vxlan/mpls'
 require 'vxlan/daemon/config'
 require 'vxlan/daemon/events'
 
@@ -48,15 +50,26 @@ module VXLAN
       POLL = 0.2   # seconds a reader waits before checking it should stop
 
       # Keys of the file a reload cannot apply to a running vtep4rd.
-      RESTART_KEYS = %i[local mtu receive_policy socket].freeze
+      RESTART_KEYS = %i[local mtu receive_policy socket core].freeze
 
       attr_reader :config, :switch, :counters, :events
 
-      def initialize(config, ports:, tunnel:, clock: nil, logger: nil, age_every: 1.0, events: nil)
+      # The MPLS edge (bgp4r docs/design/evpn-mpls.md): +core+ is a Ports
+      # of the core devices, read for EtherType 0x8847; +transport+ a
+      # Vtep::Transport, which resolves each remote PE every
+      # +resolve_every+ seconds and when a PE is first needed. Without
+      # them, a frame for a PE is a drop, no_mpls_edge.
+      def initialize(config, ports:, tunnel:, clock: nil, logger: nil, age_every: 1.0, events: nil,
+                     core: nil, transport: nil, resolve_every: 1.0)
         @config = config
         @switch = Vtep::Switch.new(**config.switch_args)
         @ports = ports
         @tunnel = tunnel
+        @core = core
+        @transport = transport
+        @resolve_every = resolve_every
+        @hops = {}      # remote PE => [Transport::Hop, since], on the worker
+        @resolve = Queue.new
         @clock = clock || -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
         self.logger = logger if logger
         @age_every = age_every
@@ -65,7 +78,8 @@ module VXLAN
         @threads = []
         @readers = {}
         @counters = { ports: Hash.new { |h, k| h[k] = { rx: 0, tx: 0 } },
-                      peers: Hash.new { |h, k| h[k] = { rx: 0, tx: 0 } } }
+                      peers: Hash.new { |h, k| h[k] = { rx: 0, tx: 0 } },
+                      core: Hash.new { |h, k| h[k] = { rx: 0, tx: 0 } } }
       end
 
       def start
@@ -74,18 +88,22 @@ module VXLAN
         @ports.names.each { |n| start_reader(n) }
         @threads << Thread.new { read_tunnel }
         @threads << Thread.new { tick } if @age_every
+        @core&.names&.each { |n| start_core_reader(n) }
+        @threads << Thread.new { resolver } if @transport
         log(:info, "vtep4rd #{@config.local}: vnis #{@switch.bridges.map(&:vni).join(', ')}, " \
-                   "ports #{@ports.names.join(', ')}")
+                   "ports #{@ports.names.join(', ')}#{", core #{@core.names.join(', ')}" if @core}")
         self
       end
 
       def stop
         @running = false
         @queue.push([:stop])
+        @resolve.push(:stop)
         (@threads + @readers.values).each { |t| t.join(2) || t.kill }
         @threads.clear
         @readers.clear
         @ports.close
+        @core&.close
         @tunnel.close
         self
       end
@@ -110,6 +128,21 @@ module VXLAN
       # The host ports open now, sorted.
       def port_names
         @ports.names.sort
+      end
+
+      # The core devices read now, sorted.
+      def core_names
+        @core ? @core.names.sort : []
+      end
+
+      # Each remote PE's transport, for show.transport. Call on the worker.
+      def transport_rows
+        @hops.sort.map { |_, (hop, since)| hop.to_h.merge(since: since) }
+      end
+
+      # Every remote PE now, resolved again on the resolver's thread.
+      def resolve_now
+        @resolve.push(:all)
       end
 
       # Age the MAC tables now, on the worker thread.
@@ -211,6 +244,116 @@ module VXLAN
         log(:error, "port #{name}: #{e.message}") if @running && @ports.open?(name)
       end
 
+      def start_core_reader(name)
+        @readers["core #{name}"] = Thread.new { read_core(name) }
+      end
+
+      # As read_port, for a core device.
+      def read_core(name)
+        failing = false
+        while @running && @core.open?(name)
+          begin
+            octets = @core.recv(name, POLL)
+            failing = false
+            @queue.push([:core, name, octets]) if octets
+          rescue SystemCallError => e
+            raise unless @running && @core.open?(name)
+
+            log(:warn, "core #{name}: #{e.message}; reading again") unless failing
+            failing = true
+            sleep POLL
+          end
+        end
+      rescue IOError, SystemCallError, Datalink::Error => e
+        log(:error, "core #{name}: #{e.message}") if @running && @core.open?(name)
+      end
+
+      # Resolves the remote PEs off the worker, since `ip` takes time: all
+      # of them every resolve_every seconds, and one PE at once when a
+      # frame first needs it. The worker applies what it found.
+      #
+      # An error is logged and the next round tried, as the worker does:
+      # a resolver that stopped would leave every PE unreached for good.
+      def resolver
+        while @running
+          job = @resolve.pop(timeout: @resolve_every)
+          break if job == :stop || !@running
+
+          begin
+            all = job.nil? || job == :all
+            pes = all ? on_worker { |sw| mpls_pes(sw) } : [job]
+            hops = pes.uniq.map { |pe| @transport.resolve(pe) }
+            @queue.push([:hops, hops, all])
+          rescue StandardError => e
+            log(:error, "resolver: #{e.class}: #{e.message}") if @running
+          end
+        end
+      end
+
+      # The PEs the MPLS VNIs send to: their flood lists and their remote
+      # MACs.
+      def mpls_pes(sw)
+        sw.bridges.select(&:mpls?).flat_map do |bd|
+          bd.flood + bd.macs.rows(now: 0).filter_map { |r| r[:vtep] }
+        end.uniq
+      end
+
+      # A resolution applied. A PE whose hop changed is logged; with all,
+      # a PE no longer used is forgotten.
+      def apply_hops(hops, all)
+        now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+        hops.each do |hop|
+          old, = @hops[hop.pe]
+          next if old && old.to_h == hop.to_h
+
+          @hops[hop.pe] = [hop, now]
+          log(hop.ok? ? :info : :warn, "transport #{hop.pe}: " +
+                                       (hop.ok? ? "labels #{hop.labels.join('/')} via #{hop.gateway} #{hop.dev}" : hop.error))
+        end
+        return unless all
+
+        (@hops.keys - hops.map(&:pe)).each { |pe| @hops.delete(pe) }
+      end
+
+      # A frame from a core device: past its Ethernet header, if it is
+      # MPLS unicast, to the Switch.
+      def from_core(dev, octets)
+        return unless octets.bytesize > 14 && octets.byteslice(12, 2).unpack1('n') == Vtep::Ports::MPLS
+
+        @counters[:core][dev][:rx] += 1
+        execute(@switch.from_core(octets.byteslice(14..), @clock.call), port: nil, core: dev)
+      end
+
+      # A Push carried out: the PE's hop, its transport labels above the
+      # packet, out of the hop's device. RFC 3032 section 5: EtherType
+      # 0x8847. A PE not resolved yet is asked for and this frame dropped.
+      def push(a)
+        hop, = @hops[a.vtep]
+        unless hop&.ok?
+          @resolve.push(a.vtep) unless hop
+          return drop(:no_transport, peer: a.vtep, detail: hop&.error)
+        end
+
+        payload = hop.labels.map { |l| Mpls::Label.new(label: l).encode }.join + a.packet.encode
+        return drop(:too_big, peer: a.vtep) if payload.bytesize > hop.mtu
+
+        frame = mac(hop.mac) + mac(hop.src_mac) + [Vtep::Ports::MPLS].pack('n') + payload
+        @core.open(hop.dev) && start_core_reader(hop.dev)
+        @core.send(hop.dev, frame)
+        @counters[:core][hop.dev][:tx] += 1
+        @counters[:peers][a.vtep][:tx] += 1
+      end
+
+      def mac(text)
+        [text.delete(':')].pack('H*')
+      end
+
+      def drop(reason, peer: nil, port: nil, detail: nil)
+        @switch.drops[reason] += 1
+        @events.publish(:drop, "drop #{reason}#{peer ? " to #{peer}" : ''}#{detail ? ": #{detail}" : ''}",
+                        peer: peer, data: { reason: reason.to_s, port: port }.compact)
+      end
+
       def read_tunnel
         while @running
           from, octets = @tunnel.recv(POLL)
@@ -238,6 +381,8 @@ module VXLAN
           when :tunnel
             @counters[:peers][job[1]][:rx] += 1
             execute(@switch.from_tunnel(job[1], job[2], @clock.call), peer: job[1])
+          when :core then from_core(job[1], job[2])
+          when :hops then apply_hops(job[1], job[2])
           when :age then @switch.age(@clock.call)
           when :call then call(job[1], job[2])
           end
@@ -251,7 +396,7 @@ module VXLAN
         reply.push([false, e])
       end
 
-      def execute(actions, port: nil, peer: nil)
+      def execute(actions, port: nil, peer: nil, core: nil)
         actions.each do |a|
           case a
           when Vtep::Deliver
@@ -261,15 +406,13 @@ module VXLAN
             @tunnel.send(a.packet.encode, a.vtep, a.source_port)
             @counters[:peers][a.vtep][:tx] += 1
           when Vtep::Push
-            # The MPLS edge is not built yet (bgp4r docs/design/evpn-mpls.md,
-            # vtep4r's step 0c): what would go out is a drop of its own.
-            @switch.drops[:no_mpls_edge] += 1
-            @events.publish(:drop, "drop no_mpls_edge to #{a.vtep}", peer: a.vtep,
-                                                                     data: { reason: 'no_mpls_edge', port: port }.compact)
+            # Without an edge, what would go to a PE is a drop of its own.
+            @core && @transport ? push(a) : drop(:no_mpls_edge, peer: a.vtep, port: port)
           when Vtep::Drop
             log(:debug, "drop #{a.reason}")
-            @events.publish(:drop, "drop #{a.reason}#{peer ? " from #{peer}" : ''}#{port ? " on #{port}" : ''}",
-                            peer: peer, data: { reason: a.reason.to_s, port: port }.compact)
+            @events.publish(:drop, "drop #{a.reason}#{peer ? " from #{peer}" : ''}#{port ? " on #{port}" : ''}" \
+                                   "#{core ? " from core #{core}" : ''}",
+                            peer: peer, data: { reason: a.reason.to_s, port: port, core: core }.compact)
           end
         rescue IOError, SystemCallError => e
           log(:warn, "#{a.class.name.split('::').last.downcase}: #{e.message}")

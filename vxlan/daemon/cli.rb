@@ -42,6 +42,7 @@ module VXLAN
           vtep4r-cli vni.labels vni=200 unicast=25000 bum=25001   an MPLS VNI's labels
           vtep4r-cli mac.add vni=200 mac=02:00:00:00:02:02 vtep=10.255.0.12 label=26000
           vtep4r-cli show.labels                   the MPLS labels this vtep4rd gave out
+          vtep4r-cli show.transport                each remote PE's labels, gateway and device
           vtep4r-cli config.reload                 the file again, as SIGHUP
           vtep4r-cli events.subscribe kinds=mac    a stream, one line per event
 

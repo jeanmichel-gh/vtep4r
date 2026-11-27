@@ -33,6 +33,14 @@ jobs:
         # vtep4rd is asserted against RFC 7348; the runner's kernel is only
         # recorded, so a kernel unlike ospflab's does not fail the job.
         run: sudo -E env "PATH=$PATH" VTEP4R_LAB_REQUIRED=1 bundle exec ruby -I. test/lab/fault_matrix_test.rb
+      - name: The kernel's MPLS modules and tcpdump, for the MPLS edge
+        # mpls_router and mpls_iptunnel may be in linux-modules-extra on the
+        # runner's kernel; the test below fails, not omits, without them.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q tcpdump "linux-modules-extra-$(uname -r)" || sudo apt-get install -y -q tcpdump
+      - name: The MPLS edge against the kernel's label switching, as root
+        run: sudo -E env "PATH=$PATH" VTEP4R_LAB_REQUIRED=1 bundle exec ruby -I. test/lab/mpls_test.rb
 
   ruby:
     name: ruby ${{ matrix.ruby }}
