@@ -39,14 +39,17 @@ the rules below. When this file does not say, do what bgp4r does.
 Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
 `validation.rb`, `fault.rb`, `gen.rb` and `gen/vary.rb`, `vtep.rb` and `vtep/` (`actions.rb`,
 `mac_table.rb`, `bridge_domain.rb`, `forwarder.rb`, `switch.rb`,
-`ports.rb`, `tunnel.rb`), `logging.rb`, `daemon/` (`config.rb`,
+`ports.rb`, `tunnel.rb`), `mpls.rb` and `mpls/` (`label.rb`,
+`control_word.rb`, `packet.rb`, `validation.rb`, `fault.rb`),
+`logging.rb`, `daemon/` (`config.rb`,
 `vtepd.rb`, `events.rb`, `api.rb`, `client.rb`, `cli.rb`,
 `server.rb`), `sim/` (`config.rb`, `injector.rb`, `http.rb`,
 `server.rb`), `exe/vtep4rd`, `exe/vtep4r-cli` and `exe/vtep4r-sim`, the
 unit tier, six functional tests, the lab tier (`test/lab/`: `lab_net.rb`,
 `kernel_test.rb`, `fault_matrix.rb` and `fault_matrix_test.rb`), the
 generated `docs/fault-matrix.md`,
-the `Dockerfile`, `specs/rfc7348.txt` and one capture in
+the `Dockerfile`, the RFCs in `specs/` (7348, and 3031, 3032, 4182, 4385
+and 7432 for MPLS) and one capture in
 `test/fixtures/`. The rest is planned.
 
 ```
@@ -57,6 +60,8 @@ vxlan/packet.rb          a header and its inner Ethernet frame, kept as octets
 vxlan/logging.rb         the injected logger, log(level, message)
 vxlan/validation.rb      every receive-side rule, with its RFC section
 vxlan/fault.rb           the fault catalog, VXLAN::Fault::CATALOG
+vxlan/mpls/              EVPN over MPLS: label stack entry, control word, packet,
+                         validation, faults (docs/mpls.md)
 vxlan/gen.rb, gen/       traffic generation: a spec in, frames out
 vxlan/vtep/              the VTEP: bridge domain, MAC table, forwarder
 vxlan/daemon/            vtep4rd: config, socket server, method table
@@ -331,3 +336,19 @@ The phases are in `docs/design/vtep4r.md`, "Work".
 there from a VTEP the API set, the `mac` events say where a MAC was,
 and a `flood` list in `evpn` mode is refused (this pull request). The
 rest is in bgp4r: bgp4rd drives `vtep4rd` through its API.
+
+**EVPN over MPLS** is bgp4r's `docs/design/evpn-mpls.md` (approved
+2026-11-27). Its pull request 0, vtep4rd's MPLS edge, is here, in
+three:
+
+| Step | Status |
+| --- | --- |
+| 0a. The codec: `Mpls::Label`, `ControlWord`, `Packet`, `Validation`, `Fault` | Done, this pull request |
+| 0b. A bridge domain's encapsulation and labels, and the API | Not started |
+| 0c. The edge: receive, send, the transport's resolution; tests in network namespaces, and the check of FRR | Not started |
+
+The owner's answers (2026-11-27): vtep4rd is the data plane, and VXLAN
+leaves its name at a later stage; an explicit null on top is skipped on
+receipt and never sent. The edge must take a packet only when its own
+label is the bottom one: with no S bit, the stack reads into the frame
+(`docs/mpls.md`).

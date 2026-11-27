@@ -75,6 +75,25 @@ g.each { |pk| socket.send(pk.encode, 0, vtep, 4789) }
 g.expected                      #=> [{ vni: 100, src: "02:00:00:00:00:01", dst: "ff:ff:ff:ff:ff:ff" }, ...]
 ```
 
+EVPN over MPLS, what follows EtherType 0x8847 (`docs/mpls.md`):
+
+```ruby
+include VXLAN::Mpls
+
+l = Label.new(label: 25001, s: 1)
+l.to_shex                       #=> "061a9140"
+l.to_s                          #=> "(label 25001, tc 0, [S], ttl 64)", tcpdump's form
+
+pk = Packet.new([16002, 25001], ControlWord.new, frame)  # S bit on the last
+pk.to_shex                      #=> "03e82040061a914000000000..."
+Packet.new(octets)              # a control word expected after the bottom label
+Packet.new(octets, control_word: false)
+
+pk.errors                       #=> [] or [#<Finding name=:no_bottom ...>]
+Fault.names                     #=> [:no_bottom, :no_control_word, :control_word_nibble, ...]
+Fault.wire(:ipv4_explicit_null, label: 25001)    # octets to send
+```
+
 Tests: `ruby test/run_unit.rb` under Bundler, or with `DATALINK_LIB`
 set to a datalink-socket checkout's `lib/`. The lab tier,
 `test/lab/`, runs the programs against the kernel's VXLAN and needs
