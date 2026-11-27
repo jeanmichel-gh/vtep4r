@@ -260,11 +260,13 @@ Every method runs on `Vtepd`'s worker thread.
 | --- | --- | --- |
 | `api.info` | version, API number, methods: routescope's contract | 4c |
 | `show.status` | local address, VNIs, MTU, receive policy, uptime | 4c |
-| `show.vnis` | per VNI: `vni`, `type` (`L2`), `vtep_ip`, `ports`, `mode`, `remote_vteps`, `flood` (`HER`), `macs`, `ageing` | 4c |
+| `show.vnis` | per VNI: `vni`, `type` (`L2`), `vtep_ip`, `ports`, `mode`, `remote_vteps`, `flood` (`HER`), `macs`, `ageing`; `encap`; for MPLS, `labels` and `flood_labels` | 4c; `encap` and the labels, EVPN over MPLS 0b |
 | `show.macs` | per MAC, all VNIs or `vni`: `local` or `remote`, port or VTEP, origin, age, sequence, moves | 4c |
 | `show.counters` | per port and per peer; drops and findings by reason | 4c |
-| `vni.flood.add`, `vni.flood.del` | a VTEP in a flood list | 4c |
-| `mac.add`, `mac.del`, `mac.flush` | entries, for EVPN; `mac.add` takes `vni`, `mac`, `vtep`, `seq` | 4c |
+| `vni.flood.add`, `vni.flood.del` | a VTEP in a flood list; over MPLS `vni.flood.add` takes `label`, the remote PE's BUM label | 4c; `label`, 0b |
+| `mac.add`, `mac.del`, `mac.flush` | entries, for EVPN; `mac.add` takes `vni`, `mac`, `vtep`, `seq`, and over MPLS `label`, the remote PE's | 4c; `label`, 0b |
+| `vni.labels` | an MPLS VNI's two labels, `unicast` and `bum`, from bgp4rd; a label another VNI has is refused | EVPN over MPLS 0b |
+| `show.labels` | each label given out: `label`, `vni`, `kind` (`unicast` or `bum`) | EVPN over MPLS 0b |
 | `vni.add`, `vni.del` | a bridge domain, with a vnis entry's keys; its ports are opened or closed, and their readers started or stopped. A `flood` list in `evpn` mode is refused, here and in the file: there bgp4rd sets the one flood list through the API | 4d |
 | `config.reload` | the file again, as SIGHUP. VNIs are added, removed, or replaced when their ports or mode changed (losing their MACs); a learn-mode VNI's flood list and any VNI's ageing are set in place. `local`, `mtu`, `receive_policy` and `socket` need a restart, and the answer names them rather than applying them | 4d |
 | `events.subscribe`, `events.unsubscribe` | a stream, in bgp4rd's form and envelope: kinds `mac` (learned, moved, aged, with the port or peer where the MAC is, or was for aged, and `from_port` or `from_vtep` for moved), `drop` (a reason, and the peer or port), `config` and `overflow`; `since` replays a backlog of 2000, with an overflow event for what is no longer kept; a keepalive line every 15 s of quiet | 4d |
