@@ -160,8 +160,14 @@ class Mpls_Test < Test::Unit::TestCase
     r, w = IO.pipe
     pid = spawn('ip', 'netns', 'exec', ns, 'tcpdump', '-U', '-i', dev, '-w', pcap, filter, out: File::NULL, err: w)
     w.close
-    ready = r.wait_readable(10) && r.gets
-    flunk("tcpdump in #{ns} on #{dev} did not start") unless ready&.include?('listening on')
+    said = []
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+    until said.last&.include?('listening on')
+      left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      line = left.positive? && r.wait_readable(left) && r.gets
+      flunk("tcpdump in #{ns} on #{dev} did not start: #{said.join.strip.inspect}") unless line
+      said << line
+    end
     yield
     # tcpdump stopped too soon counts a frame "received by filter" and
     # never writes it, on a loaded VM: wait for the file to grow first.
