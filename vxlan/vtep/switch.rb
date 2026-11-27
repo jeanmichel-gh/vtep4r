@@ -42,6 +42,7 @@ module VXLAN
         @policy = policy
         @bridges = {}
         @by_port = {}
+        @by_label = {}
         vnis.each { |v| add_bridge(BridgeDomain.new(**v)) }
         @events = []
         @drops = Hash.new(0)
@@ -67,6 +68,28 @@ module VXLAN
         apply(Forwarder.from_tunnel(@bridges, src, octets, policy: @policy), now)
       end
 
+      # The octets after an Ethernet header of EtherType 0x8847.
+      def from_core(octets, now)
+        apply(Forwarder.from_core(@by_label, octets, policy: @policy), now)
+      end
+
+      # Our labels, label => [vni, :unicast or :bum], for show.labels.
+      def labels
+        @by_label.transform_values { |bd, kind| [bd.vni, kind] }
+      end
+
+      # An MPLS bridge domain's two labels, for vtep4rd's vni.labels. A
+      # label another VNI has is refused. true when they changed.
+      def set_labels(vni, unicast:, bum:)
+        bd = @bridges[vni] or raise ArgumentError, "no vni #{vni}"
+        taken = [unicast, bum].map { |l| Integer(l) }.select { |l| (o = @by_label[l]) && o[0] != bd }
+        raise ArgumentError, "vni #{vni}: label #{taken.first} is vni #{@by_label[taken.first][0].vni}'s" unless taken.empty?
+
+        changed = bd.set_labels(unicast: unicast, bum: bum)
+        index_labels
+        changed
+      end
+
       # Age every MAC table at +now+.
       def age(now)
         @bridges.each_value do |bd|
@@ -85,6 +108,7 @@ module VXLAN
       def del_vni(vni)
         bd = @bridges.delete(vni) or return nil
         bd.ports.each { |p| @by_port.delete(p) }
+        index_labels
         bd
       end
 
@@ -93,12 +117,28 @@ module VXLAN
       def add_bridge(bd)
         raise ArgumentError, "vni #{bd.vni} twice" if @bridges.key?(bd.vni)
 
+        (bd.labels || {}).each_value do |l|
+          raise ArgumentError, "vni #{bd.vni}: label #{l} is vni #{@by_label[l][0].vni}'s" if @by_label.key?(l)
+        end
+
         bd.ports.each do |p|
           raise ArgumentError, "port #{p} in vni #{@by_port[p].vni} and #{bd.vni}" if @by_port.key?(p)
 
           @by_port[p] = bd
         end
         @bridges[bd.vni] = bd
+        index_labels
+        bd
+      end
+
+      def index_labels
+        @by_label = {}
+        @bridges.each_value do |bd|
+          next unless bd.labels
+
+          @by_label[bd.labels[:unicast]] = [bd, :unicast]
+          @by_label[bd.labels[:bum]] = [bd, :bum]
+        end
       end
 
       def apply(actions, now)

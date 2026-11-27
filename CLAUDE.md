@@ -343,8 +343,8 @@ three:
 
 | Step | Status |
 | --- | --- |
-| 0a. The codec: `Mpls::Label`, `ControlWord`, `Packet`, `Validation`, `Fault` | Done, this pull request |
-| 0b. A bridge domain's encapsulation and labels, and the API | Not started |
+| 0a. The codec: `Mpls::Label`, `ControlWord`, `Packet`, `Validation`, `Fault` | Done, #16 |
+| 0b. A bridge domain's encapsulation and labels, the Forwarder's MPLS paths, and the API | Done, this pull request |
 | 0c. The edge: receive, send, the transport's resolution; tests in network namespaces, and the check of FRR | Not started |
 
 The owner's answers (2026-11-27): vtep4rd is the data plane, and VXLAN

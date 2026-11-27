@@ -15,6 +15,9 @@ vtep4r-cli show.counters                     # frames per port and peer, drops
 vtep4r-cli mac.add vni=100 mac=02:00:00:00:01:09 vtep=10.255.0.13
 vtep4r-cli vni.add vni=200 ports='["eth3"]'  # a VNI at run time
 vtep4r-cli config.reload                     # the file again; SIGHUP does the same
+vtep4r-cli vni.labels vni=200 unicast=25000 bum=25001   # an MPLS VNI's two labels
+vtep4r-cli mac.add vni=200 mac=02:00:00:00:02:02 vtep=10.255.0.12 label=26000
+vtep4r-cli show.labels                       # the MPLS labels given out
 vtep4r-cli events.subscribe kinds=mac        # MACs learned, moved and aged, as they happen
 ```
 
@@ -24,7 +27,15 @@ vnis:
   - vni: 100
     ports: [eth2]
     flood: [10.255.0.12]
+  - vni: 200                 # EVPN over MPLS (docs/mpls.md)
+    ports: [eth3]
+    mode: evpn
+    encap: mpls
+    labels: { unicast: 25000, bum: 25001 }
 ```
+
+An MPLS VNI's frames for a remote PE are dropped (`no_mpls_edge`) until
+its edge is built.
 
 ## vtep4r-sim
 

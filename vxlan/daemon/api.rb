@@ -78,6 +78,8 @@ module VXLAN
         'show.counters' => ->(a, _p) { a.counters },
         'vni.add' => ->(a, p) { a.vni_add(p) },
         'vni.del' => ->(a, p) { a.vni_del(p) },
+        'vni.labels' => ->(a, p) { a.vni_labels(p) },
+        'show.labels' => ->(a, _p) { a.on { |sw, _now| a.label_rows(sw) } },
         'vni.flood.add' => ->(a, p) { a.flood(p, :add) },
         'vni.flood.del' => ->(a, p) { a.flood(p, :del) },
         'mac.add' => ->(a, p) { a.mac_add(p) },
@@ -192,9 +194,30 @@ module VXLAN
 
       # One row per VNI, in routescope's evpn_vnis columns where they
       # apply: the flood list is head-end replication, as FRR prints it.
+      #
+      # encap is vxlan or mpls. An MPLS VNI adds its labels, nil until
+      # vni.labels sets them, and each remote PE's BUM label.
       def vni_row(sw, bd)
-        { vni: bd.vni, type: 'L2', vtep_ip: sw.local, ports: bd.ports, mode: bd.mode,
-          remote_vteps: bd.flood, flood: 'HER', macs: bd.macs.size, ageing: bd.macs.ageing }
+        row = { vni: bd.vni, type: 'L2', vtep_ip: sw.local, ports: bd.ports, mode: bd.mode,
+                remote_vteps: bd.flood, flood: 'HER', macs: bd.macs.size, ageing: bd.macs.ageing, encap: bd.encap }
+        return row unless bd.mpls?
+
+        row.merge(labels: bd.labels, flood_labels: bd.flood.to_h { |v| [v, bd.flood_label(v)] })
+      end
+
+      # One row per label we gave out.
+      def label_rows(sw)
+        sw.labels.sort.map { |label, (vni, kind)| { label: label, vni: vni, kind: kind } }
+      end
+
+      # An MPLS VNI's two labels, from bgp4rd.
+      def vni_labels(p)
+        unicast = p.fetch('unicast')
+        bum = p.fetch('bum')
+        on do |sw, _now|
+          bd = bridge(sw, p)
+          { vni: bd.vni, changed: sw.set_labels(bd.vni, unicast: unicast, bum: bum), labels: bd.labels }
+        end
       end
 
       def macs(p)
@@ -212,22 +235,37 @@ module VXLAN
         end
       end
 
+      # Over MPLS, vni.flood.add takes the remote PE's BUM label.
       def flood(p, op)
         vtep = p.fetch('vtep').to_s
+        label = p['label']
         on do |sw, _now|
           bd = bridge(sw, p)
-          { vni: bd.vni, vtep: vtep, changed: op == :add ? bd.flood_add(vtep) : bd.flood_del(vtep), flood: bd.flood }
+          changed = op == :add ? bd.flood_add(vtep, label: label) : bd.flood_del(vtep)
+          { vni: bd.vni, vtep: vtep, changed: changed, flood: bd.flood }
+            .tap { |r| r[:label] = bd.flood_label(vtep) if bd.mpls? && op == :add }
         end
       end
 
+      # Over MPLS, mac.add takes the remote PE's label for the MAC, Label1
+      # of its type 2 route; over VXLAN there is none.
       def mac_add(p)
         mac = Datalink::MAC.new(p.fetch('mac'))
-        loc = Vtep::Location.vtep(p.fetch('vtep').to_s)
+        vtep = p.fetch('vtep').to_s
         seq = Integer(p.fetch('seq', 0))
         on do |sw, _now|
           bd = bridge(sw, p)
+          label = p['label']
+          if bd.mpls?
+            raise ArgumentError, "vni #{bd.vni}: a MAC over mpls needs the remote PE's label" if label.nil?
+
+            label = Vtep::BridgeDomain.label(label)
+          elsif label
+            raise ArgumentError, "vni #{bd.vni}: a label is for encap mpls"
+          end
+          loc = Vtep::Location.vtep(vtep, label)
           bd.macs.add(mac, loc, seq: seq)
-          { vni: bd.vni, mac: mac.to_s, vtep: loc.name, seq: seq }
+          { vni: bd.vni, mac: mac.to_s, vtep: loc.name, seq: seq }.tap { |r| r[:label] = label if label }
         end
       end
 
@@ -256,6 +294,7 @@ module VXLAN
         v = Config.new('local' => '0.0.0.0', 'vnis' => [p]).vnis.first
         bd = @vtepd.add_vni(**v)
         { vni: bd.vni, ports: bd.ports, mode: bd.mode, flood: bd.flood }
+          .tap { |r| r.merge!(encap: bd.encap, labels: bd.labels) if bd.mpls? }
       rescue Config::Error => e
         raise ArgumentError, e.message
       end

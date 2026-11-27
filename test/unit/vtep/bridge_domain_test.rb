@@ -76,4 +76,59 @@ class Bridge_domain_Test < Test::Unit::TestCase
     assert_equal [:unknown_port], sw.from_port('eth3', frame, 0).map(&:reason)
     assert sw.add_vni(vni: 3, ports: ['eth3'])
   end
+
+  # EVPN over MPLS (bgp4r docs/design/evpn-mpls.md).
+
+  def mpls(**kw)
+    VXLAN::Vtep::BridgeDomain.new(vni: 200, ports: ['eth3'], mode: :evpn, encap: :mpls, **kw)
+  end
+
+  def test_vxlan_is_the_default_encapsulation
+    bd = VXLAN::Vtep::BridgeDomain.new(vni: 1, ports: [])
+    assert_equal :vxlan, bd.encap
+    refute bd.mpls?
+    assert_nil bd.labels
+  end
+
+  def test_mpls_needs_evpn_mode
+    e = assert_raise(ArgumentError) { VXLAN::Vtep::BridgeDomain.new(vni: 2, ports: [], encap: :mpls) }
+    assert_match(/does not say which PE/, e.message)
+    assert_raise(ArgumentError) { VXLAN::Vtep::BridgeDomain.new(vni: 2, ports: [], encap: :gre) }
+  end
+
+  def test_labels_are_for_mpls_only
+    assert_raise(ArgumentError) { VXLAN::Vtep::BridgeDomain.new(vni: 2, ports: [], labels: { unicast: 25_000, bum: 25_001 }) }
+    assert_equal({ unicast: 25_000, bum: 25_001 }, mpls(labels: { unicast: 25_000, bum: 25_001 }).labels)
+    assert_equal({ unicast: 25_000, bum: 25_001 }, mpls(labels: { 'unicast' => 25_000, 'bum' => 25_001 }).labels)
+  end
+
+  # RFC 3032 section 2.1: 0 to 15 are reserved.
+  def test_a_label_is_16_to_2_to_the_20_less_one
+    bd = mpls
+    assert_raise(ArgumentError) { bd.set_labels(unicast: 15, bum: 25_001) }
+    assert_raise(ArgumentError) { bd.set_labels(unicast: 25_000, bum: 0x100000) }
+    assert_raise(ArgumentError) { bd.set_labels(unicast: 'x', bum: 25_001) }
+    assert bd.set_labels(unicast: 16, bum: 0xfffff)
+    refute bd.set_labels(unicast: 16, bum: 0xfffff), 'the same labels are no change'
+  end
+
+  def test_unicast_and_bum_differ
+    assert_raise(ArgumentError) { mpls.set_labels(unicast: 25_000, bum: 25_000) }
+  end
+
+  def test_an_mpls_flood_entry_carries_the_remote_bum_label
+    bd = mpls
+    assert_raise(ArgumentError) { bd.flood_add('10.255.0.12') }
+    assert bd.flood_add('10.255.0.12', label: 26_001)
+    refute bd.flood_add('10.255.0.12', label: 26_001)
+    assert bd.flood_add('10.255.0.12', label: 26_011), 'a new label is a change'
+    assert_equal [['10.255.0.12'], 26_011], [bd.flood, bd.flood_label('10.255.0.12')]
+    assert bd.flood_del('10.255.0.12')
+    assert_nil bd.flood_label('10.255.0.12')
+  end
+
+  def test_a_vxlan_flood_entry_has_no_label
+    bd = VXLAN::Vtep::BridgeDomain.new(vni: 1, ports: [])
+    assert_raise(ArgumentError) { bd.flood_add('10.255.0.12', label: 26_001) }
+  end
 end

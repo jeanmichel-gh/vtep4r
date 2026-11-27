@@ -71,7 +71,7 @@ class Api_Test < Test::Unit::TestCase
 
   def test_show_vnis
     assert_equal [{ vni: 100, type: 'L2', vtep_ip: '10.255.0.11', ports: ['eth2'], mode: :learn,
-                    remote_vteps: ['10.255.0.12'], flood: 'HER', macs: 0, ageing: 300 }],
+                    remote_vteps: ['10.255.0.12'], flood: 'HER', macs: 0, ageing: 300, encap: :vxlan }],
                  call('show.vnis')[:result]
   end
 
@@ -178,9 +178,92 @@ class Api_Test < Test::Unit::TestCase
     FileUtils.rm_rf(dir) if dir
   end
 
+  # Labels in the file are set in place; a change of encapsulation
+  # replaces the VNI, as a change of mode does.
+  def test_config_reload_over_mpls
+    dir = File.join(ENV['TMPDIR'] || '/tmp', "vtep4r-m#{Process.pid}-#{rand(1 << 16)}")
+    Dir.mkdir(dir)
+    file = File.join(dir, 'f.yml')
+    api = Daemon::Api.new(@vtepd, path: '/nonexistent', config_path: file)
+    head = "local: 10.255.0.11\nvnis:\n  - vni: 100\n    ports: [eth2]\n    flood: [10.255.0.12]\n"
+    mpls = "  - vni: 200\n    ports: [eth3]\n    mode: evpn\n    encap: mpls\n"
+    File.write(file, "#{head}#{mpls}    labels: { unicast: 25000, bum: 25001 }\n")
+    assert_equal [200], api.handle('id' => 1, 'method' => 'config.reload')[:result][:added]
+    File.write(file, "#{head}#{mpls}    labels: { unicast: 25000, bum: 25002 }\n")
+    assert_equal [200], api.handle('id' => 2, 'method' => 'config.reload')[:result][:changed]
+    assert_equal [25_000, 25_002], call('show.labels')[:result].map { |r| r[:label] }
+    File.write(file, "#{head}#{mpls}")
+    r = api.handle('id' => 3, 'method' => 'config.reload')[:result]
+    assert_equal [[], []], r.values_at(:changed, :replaced)
+    assert_equal [25_000, 25_002], call('show.labels')[:result].map { |r2| r2[:label] }, 'no labels in the file: kept'
+    File.write(file, "#{head}  - vni: 200\n    ports: [eth3]\n    mode: evpn\n")
+    assert_equal [200], api.handle('id' => 4, 'method' => 'config.reload')[:result][:replaced]
+    assert_equal [], call('show.labels')[:result]
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   def test_a_reload_described_in_words
     assert_equal 'nothing changed', Daemon::Vtepd.describe(added: [], removed: [], needs_restart: [])
     assert_equal 'added 200, 300; needs_restart local',
                  Daemon::Vtepd.describe(added: [200, 300], removed: [], needs_restart: [:local])
+  end
+
+  # EVPN over MPLS.
+
+  def add_mpls(labels = { 'unicast' => 25_000, 'bum' => 25_001 })
+    call('vni.add', { 'vni' => 200, 'ports' => ['eth3'], 'mode' => 'evpn', 'encap' => 'mpls', 'labels' => labels }.compact)
+  end
+
+  def test_an_mpls_vni_added_with_its_labels
+    r = add_mpls[:result]
+    assert_equal [:mpls, { unicast: 25_000, bum: 25_001 }], r.values_at(:encap, :labels)
+    row = call('show.vnis')[:result].find { |v| v[:vni] == 200 }
+    assert_equal [:mpls, { unicast: 25_000, bum: 25_001 }, {}], row.values_at(:encap, :labels, :flood_labels)
+    assert_equal [{ label: 25_000, vni: 200, kind: :unicast }, { label: 25_001, vni: 200, kind: :bum }],
+                 call('show.labels')[:result]
+  end
+
+  def test_vni_labels_sets_them_later
+    add_mpls(nil)
+    assert_nil call('show.vnis')[:result].find { |v| v[:vni] == 200 }[:labels]
+    r = call('vni.labels', 'vni' => 200, 'unicast' => 25_010, 'bum' => 25_011)[:result]
+    assert_equal [true, { unicast: 25_010, bum: 25_011 }], r.values_at(:changed, :labels)
+    refute call('vni.labels', 'vni' => 200, 'unicast' => 25_010, 'bum' => 25_011)[:result][:changed]
+    assert_match(/labels are for encap mpls/, call('vni.labels', 'vni' => 100, 'unicast' => 25_020, 'bum' => 25_021)[:error])
+    assert_match(/is not 16 to/, call('vni.labels', 'vni' => 200, 'unicast' => 3, 'bum' => 25_021)[:error])
+  end
+
+  def test_a_remote_mac_and_flood_entry_over_mpls_carry_the_pes_label
+    add_mpls
+    assert_match(/needs the remote PE's label/, call('mac.add', 'vni' => 200, 'mac' => '02:00:00:00:02:02', 'vtep' => '10.255.0.12')[:error])
+    r = call('mac.add', 'vni' => 200, 'mac' => '02:00:00:00:02:02', 'vtep' => '10.255.0.12', 'label' => 26_000)[:result]
+    assert_equal 26_000, r[:label]
+    assert_equal 26_000, call('show.macs', 'vni' => 200)[:result][0][:label]
+    assert_match(/needs the remote PE's label/, call('vni.flood.add', 'vni' => 200, 'vtep' => '10.255.0.12')[:error])
+    r = call('vni.flood.add', 'vni' => 200, 'vtep' => '10.255.0.12', 'label' => 26_001)[:result]
+    assert_equal [true, 26_001], r.values_at(:changed, :label)
+    assert_equal({ '10.255.0.12' => 26_001 }, call('show.vnis')[:result].find { |v| v[:vni] == 200 }[:flood_labels])
+  end
+
+  def test_a_vxlan_vni_takes_no_label
+    assert_match(/a label is for encap mpls/, call('mac.add', 'vni' => 100, 'mac' => '02:00:00:00:02:02', 'vtep' => '10.255.0.12', 'label' => 26_000)[:error])
+    assert_match(/a label is for encap mpls/, call('vni.flood.add', 'vni' => 100, 'vtep' => '10.255.0.13', 'label' => 26_001)[:error])
+    assert_nil call('show.macs')[:result].find { |m| m.key?(:label) }
+  end
+
+  def test_an_mpls_vni_in_learn_mode_is_refused
+    assert_match(/needs mode evpn/, call('vni.add', 'vni' => 300, 'ports' => [], 'encap' => 'mpls')[:error])
+  end
+
+  # Until the MPLS edge is built, what would go to a PE is a drop of its
+  # own, counted and published.
+  def test_a_frame_for_a_pe_is_a_no_mpls_edge_drop
+    add_mpls
+    call('vni.flood.add', 'vni' => 200, 'vtep' => '10.255.0.12', 'label' => 26_001)
+    @vtepd.on_worker do |sw|
+      @vtepd.send(:execute, sw.from_port('eth3', ['ffffffffffff020000000101' + '88b5' + '00' * 46].pack('H*'), @now), port: 'eth3')
+    end
+    assert_equal 1, call('show.counters')[:result][:drops][:no_mpls_edge]
   end
 end

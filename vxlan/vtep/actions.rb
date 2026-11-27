@@ -22,14 +22,16 @@
 
 module VXLAN
   module Vtep
-    # Where a MAC is: on a host port, or behind a remote VTEP.
-    Location = Struct.new(:kind, :name) do
+    # Where a MAC is: on a host port, or behind a remote VTEP. Over MPLS
+    # a remote MAC also has the label its PE gave (RFC 7432 section 9.2.1,
+    # Label1 of its type 2 route).
+    Location = Struct.new(:kind, :name, :label) do
       def self.port(name)
         new(:port, name)
       end
 
-      def self.vtep(address)
-        new(:vtep, address)
+      def self.vtep(address, label = nil)
+        new(:vtep, address, label)
       end
 
       def port?
@@ -41,7 +43,7 @@ module VXLAN
       end
 
       def to_s
-        "#{kind} #{name}"
+        label ? "#{kind} #{name} label #{label}" : "#{kind} #{name}"
       end
     end
 
@@ -50,11 +52,15 @@ module VXLAN
     #
     #   Deliver  a frame's octets out of a host port
     #   Tunnel   a Packet to a VTEP, from a UDP source port
+    #   Push     an Mpls::Packet (the remote PE's label, the control word
+    #            and the frame) to a PE, for the MPLS edge to put its
+    #            transport labels on
     #   Learn    a MAC seen at a location, in a VNI
     #   Note     a finding the receiver ignores, by name
     #   Drop     why a frame or packet went nowhere
     Deliver = Struct.new(:port, :octets)
     Tunnel = Struct.new(:vtep, :packet, :source_port)
+    Push = Struct.new(:vtep, :label, :packet)
     Learn = Struct.new(:vni, :mac, :location)
     Note = Struct.new(:finding)
     Drop = Struct.new(:reason)
