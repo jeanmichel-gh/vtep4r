@@ -34,8 +34,9 @@ vnis:
     labels: { unicast: 25000, bum: 25001 }
 ```
 
-An MPLS VNI's frames for a remote PE are dropped (`no_mpls_edge`) until
-its edge is built.
+An MPLS VNI needs `core: [eth1]`, the devices toward the core;
+`vtep4r-cli show.transport` gives each remote PE's labels, gateway and
+device.
 
 ## vtep4r-sim
 

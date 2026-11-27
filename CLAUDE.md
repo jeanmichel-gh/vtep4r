@@ -39,17 +39,18 @@ the rules below. When this file does not say, do what bgp4r does.
 Built so far: the entry point, `version.rb`, `header.rb`, `packet.rb`,
 `validation.rb`, `fault.rb`, `gen.rb` and `gen/vary.rb`, `vtep.rb` and `vtep/` (`actions.rb`,
 `mac_table.rb`, `bridge_domain.rb`, `forwarder.rb`, `switch.rb`,
-`ports.rb`, `tunnel.rb`), `mpls.rb` and `mpls/` (`label.rb`,
+`ports.rb`, `tunnel.rb`, `transport.rb`), `mpls.rb` and `mpls/` (`label.rb`,
 `control_word.rb`, `packet.rb`, `validation.rb`, `fault.rb`),
 `logging.rb`, `daemon/` (`config.rb`,
 `vtepd.rb`, `events.rb`, `api.rb`, `client.rb`, `cli.rb`,
 `server.rb`), `sim/` (`config.rb`, `injector.rb`, `http.rb`,
 `server.rb`), `exe/vtep4rd`, `exe/vtep4r-cli` and `exe/vtep4r-sim`, the
-unit tier, six functional tests, the lab tier (`test/lab/`: `lab_net.rb`,
-`kernel_test.rb`, `fault_matrix.rb` and `fault_matrix_test.rb`), the
+unit tier, seven functional tests, the lab tier (`test/lab/`: `lab_net.rb`,
+`kernel_test.rb`, `fault_matrix.rb`, `fault_matrix_test.rb` and
+`mpls_test.rb`), the
 generated `docs/fault-matrix.md`,
-the `Dockerfile`, the RFCs in `specs/` (7348, and 3031, 3032, 4182, 4385
-and 7432 for MPLS) and one capture in
+the `Dockerfile`, the RFCs in `specs/` (7348, and 3031, 3032, 4182, 4385,
+7432 and 8365 for MPLS) and one capture in
 `test/fixtures/`. The rest is planned.
 
 ```
@@ -191,6 +192,7 @@ DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/programs_test.rb
 DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/events_stream_test.rb
 DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/sim_test.rb
 DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/sim_program_test.rb
+DATALINK_LIB=~/datalink-socket/lib ruby -I. test/functional/mpls_two_pes_test.rb
 ```
 
 `programs_test.rb` and `sim_program_test.rb` run the programs as a
@@ -214,7 +216,14 @@ so CI cannot pass with nothing tested:
 ```sh
 sudo DATALINK_LIB=~/datalink-socket/lib ruby -I. test/lab/kernel_test.rb
 sudo DATALINK_LIB=~/datalink-socket/lib ruby -I. test/lab/fault_matrix_test.rb
+sudo DATALINK_LIB=~/datalink-socket/lib ruby -I. test/lab/mpls_test.rb
 ```
+
+`mpls_test.rb` runs two vtep4rd as PEs across the kernel's label
+switching in five namespaces, `vm4H1`, `vm4A`, `vm4P`, `vm4B` and
+`vm4H2`, and needs the kernel's `mpls_router` and `mpls_iptunnel` and
+tcpdump. It waits for tcpdump to say it listens, and for its file to
+grow before stopping it: on a loaded VM a fixed wait missed frames.
 
 **`docs/fault-matrix.md` is generated, never edited.** The matrix test
 writes it when `VTEP4R_MATRIX_DOC` names the path:
@@ -344,8 +353,13 @@ three:
 | Step | Status |
 | --- | --- |
 | 0a. The codec: `Mpls::Label`, `ControlWord`, `Packet`, `Validation`, `Fault` | Done, #16 |
-| 0b. A bridge domain's encapsulation and labels, the Forwarder's MPLS paths, and the API | Done, this pull request |
-| 0c. The edge: receive, send, the transport's resolution; tests in network namespaces, and the check of FRR | Not started |
+| 0b. A bridge domain's encapsulation and labels, the Forwarder's MPLS paths, and the API | Done, #17 |
+| 0c. The edge: receive, send, the transport's resolution; tests in network namespaces, and the check of FRR | Done, this pull request |
+
+FRR 10.7.1 imports EVPN routes from an MPLS PE into its VXLAN VNI,
+with or without an Encapsulation community of type MPLS, and programs
+VXLAN entries for them (`docs/mpls.md`). An FRR VXLAN leaf must not
+share a route target with an MPLS MAC-VRF.
 
 The owner's answers (2026-11-27): vtep4rd is the data plane, and VXLAN
 leaves its name at a later stage; an explicit null on top is skipped on
