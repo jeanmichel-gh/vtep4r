@@ -308,7 +308,8 @@ Nothing new is needed for steps 1 to 4 below. For `inner_vlan: keep`,
 a port must read the tag the kernel took out. That is the tc redirect
 above, with no C and no new gem:
 
-- **vtep4rd sets it up.** For each port of a VNI with `inner_vlan:
+- **vtep4rd sets it up**, the owner's decision (2026-11-28), so a lab
+  only names the port. For each port of a VNI with `inner_vlan:
   keep`, at start, it makes a dummy device `kt` + the port's ifindex
   (`kt12`, within 15 characters), a `clsact` qdisc on the port, and a
   `matchall` filter that redirects the port's ingress to the dummy. It
@@ -746,9 +747,8 @@ tunnel. It needs the last step, kept tags.
    face.
 3. **How a kept tag is read.** Decided by the owner (2026-11-28): no C
    code and no gem. Ruby's `recvmsg` cannot (measured), a ring cannot on
-   4.0, so a tc redirect, set up by vtep4rd. Left open: should the lab's
-   container command set up the redirect instead, so vtep4rd never runs
-   `tc`?
+   4.0, so a tc redirect. vtep4rd sets it up itself, and removes it
+   (the owner, 2026-11-28).
 4. **`inner_vlan` over MPLS.** Should `from_core` drop a tagged inner
    frame too? RFC 7432 is to be read on it first.
 5. **Two tags on an 802.1Q device.** The inner tag reaches vtep4rd in
