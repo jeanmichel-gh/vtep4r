@@ -115,6 +115,33 @@ ethertype 802.1Q-QinQ (0x88a8), length 64: vlan 20, p 0, ethertype 802.1Q (0x810
 
 So injecting frames on any VLAN needs no change to datalink-socket.
 
+**datalink-socket writes a tag as given, and reads it with the outer
+tag taken out.** The owner asked (2026-11-28) for this to be checked
+with datalink-socket at both ends. On a veth pair with no VLAN device,
+datalink-socket wrote an 802.1Q frame (VID 100) and a QinQ frame (S
+1000, C 10) on `gA0`, and read on both ends. Bytes 12 to 21 of each:
+
+```
+gB0 read 60 bytes, otherhost, bytes 12..21: 88b5 7171 7171 7171 7171
+gB0 read 60 bytes, otherhost, bytes 12..21: 8100 000a 88b5 7171 7171
+gA0 read 64 bytes, outgoing, bytes 12..21: 8100 0064 88b5 7171 7171
+gA0 read 64 bytes, outgoing, bytes 12..21: 88a8 03e8 8100 000a 88b5
+```
+
+The frames left as written: the sender's own socket reads both tags,
+and tcpdump on `gB0` shows `vlan 100` and `vlan 1000 ... vlan 10`. The
+receiver's socket read them 4 bytes shorter, the outer tag gone and the
+inner one kept. With `rx-vlan-offload` off on `gB0` the reads were the
+same, byte for byte. So it is the kernel's receive path that moves the
+outer tag into the packet's metadata, not the veth's offload, and
+tcpdump shows it only because libpcap puts it back from the auxdata.
+
+datalink-socket's ARP tools agree. `arp-scan -i gA0.100` found
+`172.16.10.2` behind `gB0.100`: its requests left with `vlan 100`,
+added by the VLAN device, and the replies were read untagged. Neither
+tool builds or reads a tag itself, so they work on a VLAN device as
+they are.
+
 **The tag comes back in `PACKET_AUXDATA`, and Ruby cannot read it.**
 With that socket option set, each read has a `tpacket_auxdata` with the
 TCI and the TPID:
@@ -187,8 +214,11 @@ it: `eth2.1000` (`type vlan proto 802.1ad id 1000`), then `eth2.1000.10`
 
 Four things.
 
-1. **A parent and its VLAN devices are not both ports.** The parent's
-   socket reads every VLAN's frames, untagged (measured above), so each
+1. **A parent and its VLAN devices are not both ports.** The owner's
+   rule (2026-11-28): a VLAN is `eth2.VID`, untagged traffic is plain
+   `eth2`, and one interface is never both. A lab that needs both runs
+   two links between the same two nodes. The parent's socket reads
+   every VLAN's frames, untagged (measured above), so with both each
    frame would be bridged twice. At start, and on `vni.add` and
    `config.reload`, vtep4rd reads `/sys/class/net/NAME/lower_*` for
    every port, and refuses a set where one port is below another. The
@@ -369,6 +399,12 @@ gB0.100 read: {[1514, :otherhost]=>1}
 ```
 
 So the default `dst`, a MAC nobody owns, is counted as well.
+
+The receiver never relies on a tag it reads. The kernel takes the outer
+one out (measured above), so the payload's `vid` says which VLAN the
+frame was sent on, and the device it arrived on says which VNI it came
+out of. That holds on a VLAN device and on a plain port alike, with no
+auxdata.
 
 #### Every frame accounted for
 
@@ -635,15 +671,16 @@ tunnel. It needs the last step, kept tags.
 
 ## Open questions
 
-1. **A parent with its VLAN devices.** This design refuses the pair.
-   With `restore_vlan`, vtep4rd could open the parent alone and map
-   VIDs itself. Is the refusal enough for now?
+1. **A parent with its VLAN devices.** Decided by the owner
+   (2026-11-28): never both on one interface; two links when a lab
+   needs both.
 2. **The host injector's home.** Decided by the owner (2026-11-28):
    both the one-off frames and the background generator are
    datalink-socket's `datalink-gen`; vtep4r-sim is only their HTTP
    face.
-3. **How datalink-socket calls `recvmsg`.** Fiddle, a default gem in
-   3.3 and 3.4, or a small C extension. Only step 6 needs it. Fiddle on
+3. **How datalink-socket calls `recvmsg`.** The outer tag is in the
+   auxdata only, offload on or off (measured above), so kept tags need
+   it. Fiddle, a default gem in 3.3 and 3.4, or a small C extension. Only step 6 needs it. Fiddle on
    Ruby 4.0 is not measured yet.
 4. **`inner_vlan` over MPLS.** Should `from_core` drop a tagged inner
    frame too? RFC 7432 is to be read on it first.
