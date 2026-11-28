@@ -156,9 +156,64 @@ len=46 inline_type=0x8100 aux(lvl=263,type=8) tpid=0x88a8 vid=30 pcp=0 dei=0
 On a parent, QinQ's outer tag is in the auxdata and the inner one
 stays in the frame. Ruby's `Socket#recvmsg` fails on an `AF_PACKET`
 socket with `Errno::EINVAL`. libc's `recvmsg` through Fiddle fails the
-same way with `MSG_CMSG_CLOEXEC` and works with flags 0, so Ruby most
-likely adds that flag. Fiddle is a default gem in Ruby 3.3.8 and
-3.4.13. 4.0 was not measured.
+same way with `MSG_CMSG_CLOEXEC` and works with flags 0. strace shows
+that Ruby adds the flag, and it does on 3.3.8, 3.4.13 and 4.0.10, with
+or without `scm_rights`:
+
+```
+recvmsg(5, {msg_namelen=2048}, MSG_CMSG_CLOEXEC) = -1 EINVAL (Invalid argument)
+4.0.10 recvmsg {scm_rights: false}: Errno::EINVAL: Invalid argument - recvmsg(2)
+```
+
+So Ruby's own `recvmsg` cannot read the auxdata. Fiddle and a C
+extension are out: the owner's rule (2026-11-28) is no C code and no
+gem beyond what the repository has.
+
+**A receive ring, in pure Ruby, reads the tags on 3.2 to 3.4, and not
+on 4.0.** A `TPACKET_V2` receive ring is a block of memory the kernel
+shares with the socket: `setsockopt(PACKET_RX_RING)` makes it, `mmap`
+maps it, and each slot starts with a header that holds the TCI and the
+TPID. `Socket#setsockopt` and `IO::Buffer.map` do both, with no C:
+
+```
+3.4.13: mapped 262144 bytes on Socket
+gB0 len 60 status 0x20000001 tag none -> 60 bytes, 12..21: 88b5 7171 7171 7171 7171
+gB0 len 60 status 0x20000051 tag tpid=0x8100 vid=100 pcp=3 dei=1 -> 64 bytes, 12..21: 8100 7064 88b5 7171 7171
+gB0 len 60 status 0x20000051 tag tpid=0x88a8 vid=1000 pcp=0 dei=0 -> 64 bytes, 12..21: 88a8 03e8 8100 000a 88b5
+```
+
+The same on 3.2.11 and 3.3.8. It read 368,281 frames a second where
+datalink-socket's `recvfrom` read 149,093. But Ruby 4.0.10's
+`IO::Buffer.map` refuses anything with no file size, whatever size is
+given: `ArgumentError: Invalid negative or zero file size!`, on the
+socket, on `File.for_fd` and with a `size` method. So it is not the
+way while 4.0 is a Ruby we run.
+
+**A tc redirect puts the tags back in the frame, on every Ruby.** The
+kernel takes the tag out on the way in and puts it into the frame on
+the way out of a device that cannot carry it aside. A dummy device
+cannot (`tx-vlan-offload: off [fixed]`). So the port's frames are sent
+there, and read there, as the dummy's outgoing frames:
+
+```
+ip link add rx0 type dummy && ip link set rx0 up
+tc qdisc add dev gB0 clsact
+tc filter add dev gB0 ingress matchall action mirred egress redirect dev rx0
+```
+
+```
+rx0 read 60 bytes, outgoing, bytes 12..21: 88b5 7171 7171 7171 7171
+rx0 read 64 bytes, outgoing, bytes 12..21: 8100 7064 88b5 7171 7171
+rx0 read 64 bytes, outgoing, bytes 12..21: 88a8 03e8 8100 000a 88b5
+```
+
+datalink-socket read that, as it is today, on 3.3.8 and on 4.0.10,
+PCP, DEI and both QinQ tags included. On an 802.1ad device
+(`gB0.s1000`), the same redirect gave the C-tag back:
+`8100 000a 88b5`, the S-tag taken by the device. At 10,000 frames a
+second for 3 s, it read 30,000 of 30,000. Flat out, it kept up with 40
+to 53 thousand a second, a third of a plain read. The frames no longer
+reach the port's own IP stack, which a leaf port does not use.
 
 **A VLAN device names its parent in sysfs.** `/sys/class/net/d0.100/`
 has `lower_d0`, and `/sys/class/net/d0/` has `upper_d0.100`.
@@ -234,8 +289,8 @@ Four things.
    "unless configured otherwise". Tagged inner frames are then taken
    from the tunnel and delivered as they are. This is RFC 8365's VLAN
    Bundle Service, and QinQ where an S-VLAN is one VNI. It needs the
-   tags on the port side, which only `PACKET_AUXDATA` gives: see the
-   next section. It is the last step of the work.
+   tags on the port side, which a tc redirect gives: see the next
+   section. It is the last step of the work.
 
 4. **A frame its port refuses is a drop**, `port_send`. Today
    `execute` logs `EMSGSIZE` from `@ports.send` as a warning and counts
@@ -247,23 +302,32 @@ Four things.
 `too_big` is unchanged. A VLAN device's frames are already untagged. A
 kept inner tag counts in the inner frame's length, as it should.
 
-### datalink-socket, only for kept tags
+### Reading kept tags
 
-Nothing in datalink-socket is needed for steps 1 to 4 below. For
-`inner_vlan: keep`, a port must read the tag the kernel took out:
+Nothing new is needed for steps 1 to 4 below. For `inner_vlan: keep`,
+a port must read the tag the kernel took out. That is the tc redirect
+above, with no C and no new gem:
 
-- **`restore_vlan: true` on the Linux backend.** The socket sets
-  `PACKET_AUXDATA`. Each read uses libc's `recvmsg` with flags 0. When
-  the auxdata has `TP_STATUS_VLAN_VALID`, the four octets go back after
-  the source MAC: the TPID (`tp_vlan_tpid` when
-  `TP_STATUS_VLAN_TPID_VALID` is set, 0x8100 otherwise), then the TCI.
-  The frame then reads as it was on the wire. Off by default, so
-  isis4r sees what it sees today.
-- **`Frame` keeps the DEI bit**, as `vlan_dei`, and parses a 0x88a8
-  outer tag, as `vlan_tpid`. This is a fix, with a test that fails
-  first. It can go in on its own, before the rest.
+- **vtep4rd sets it up.** For each port of a VNI with `inner_vlan:
+  keep`, at start, it makes a dummy device `kt` + the port's ifindex
+  (`kt12`, within 15 characters), a `clsact` qdisc on the port, and a
+  `matchall` filter that redirects the port's ingress to the dummy. It
+  runs `ip` and `tc`, as its Transport already runs `ip -j`. It removes
+  them on stop, and at start removes any it left behind.
+- **Two sockets for that port.** vtep4rd reads on the dummy, every
+  frame of which is `outgoing`, so that socket does not ignore
+  outgoing. It writes on the port itself, where tags leave as written.
+  The port's own socket reads nothing.
+- **datalink-socket needs no change to read them.** `Frame` keeps the
+  DEI bit, as `vlan_dei`, and parses a 0x88a8 outer tag, as
+  `vlan_tpid`. That is a fix, with a test that fails first, and it can
+  go in on its own.
+- **Needs `CAP_NET_ADMIN`** in the leaf's namespace, for `ip` and
+  `tc`. A port with no kept VNI is opened as today, with no tc.
 
-vtep4rd opens a port with `restore_vlan` only when its VNI keeps tags.
+A receive ring would be the faster read, measured above. It waits
+until `IO::Buffer.map` takes a socket on every Ruby we run, and is not
+needed under the generator's cap.
 
 ### Injecting from a host
 
@@ -604,9 +668,10 @@ tunnel. It needs the last step, kept tags.
    eth1.1000 then .1000.10, .1000.20     eth1.10, eth1.20
 ```
 
-- l1 opens `eth2.1000` with `restore_vlan`: the C-tag comes back from
-  the auxdata (measured above: `tpid=0x8100 vid=10`). l2 opens `eth2`
-  with `restore_vlan` too, since the kernel strips h2's C-tag there.
+- l1 reads `eth2.1000` through the redirect: the C-tag comes back in
+  the frame (measured above, `8100 000a 88b5` on `gB0.s1000`). l2
+  reads its plain `eth2` the same way, since the kernel strips h2's
+  C-tag there.
 - On the way back, l1 writes the C-tagged frame on `eth2.1000`, and the
   kernel adds the S-tag (measured above).
 - `baseline`: h1 pings h2 on C-VLANs 10 and 20. One VNI's MAC table at
@@ -621,7 +686,8 @@ tunnel. It needs the last step, kept tags.
 - **Unit**, no root: the Forwarder's `inner_vlan` drop and `keep`; the
   port check on a fake `/sys`, refusing a parent with its child and a
   QinQ device with its C-VLAN device; `inner_vlan_tag` in the catalog.
-  In datalink-socket: the auxdata unpacked from given bytes, and DEI;
+  vtep4rd's `ip` and `tc` commands for a kept port, on a fake runner,
+  and their removal. In datalink-socket: DEI and 0x88a8;
   `datalink-gen`'s frames (VIDs in order, the source MACs per VID, the
   payload's fields and CRC), its pacing on a manual clock, sizes against
   a given MTU and tag count, and the receiver's counts on given frames:
@@ -654,8 +720,8 @@ tunnel. It needs the last step, kept tags.
    `background` and `jumbo`.
 5. datalink-socket: the DEI bit and 0x88a8 in `Frame`. A fix, on its
    own.
-6. datalink-socket: `restore_vlan`. vtep4r: `inner_vlan: keep`. Then
-   lab 3.
+6. vtep4r: the tc redirect for kept ports and `inner_vlan: keep`, with
+   the lab tier run in network namespaces. Then lab 3.
 
 ## Later
 
@@ -678,10 +744,11 @@ tunnel. It needs the last step, kept tags.
    both the one-off frames and the background generator are
    datalink-socket's `datalink-gen`; vtep4r-sim is only their HTTP
    face.
-3. **How datalink-socket calls `recvmsg`.** The outer tag is in the
-   auxdata only, offload on or off (measured above), so kept tags need
-   it. Fiddle, a default gem in 3.3 and 3.4, or a small C extension. Only step 6 needs it. Fiddle on
-   Ruby 4.0 is not measured yet.
+3. **How a kept tag is read.** Decided by the owner (2026-11-28): no C
+   code and no gem. Ruby's `recvmsg` cannot (measured), a ring cannot on
+   4.0, so a tc redirect, set up by vtep4rd. Left open: should the lab's
+   container command set up the redirect instead, so vtep4rd never runs
+   `tc`?
 4. **`inner_vlan` over MPLS.** Should `from_core` drop a tagged inner
    frame too? RFC 7432 is to be read on it first.
 5. **Two tags on an 802.1Q device.** The inner tag reaches vtep4rd in
